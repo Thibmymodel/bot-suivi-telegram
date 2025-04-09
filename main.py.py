@@ -1,4 +1,3 @@
-
 import os
 import json
 import pytesseract
@@ -19,13 +18,15 @@ from telegram.ext import (
 with open("config.json", "r") as f:
     config = json.load(f)
 
-TOKEN = config["telegram_token"]
+TOKEN = config.get("telegram_token") or os.environ.get("TELEGRAM_BOT_TOKEN")
 GROUP_ID = config["group_id"]
 REPLY_DELAY = config.get("reply_delay_minutes", 10)
 
-# Configuration de Google Sheets
+# Configuration de Google Sheets via variable d’environnement
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+credentials_json = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+credentials_dict = json.loads(credentials_json)
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 sheet = gc.open_by_key(config["google_sheet_id"])
 worksheet = sheet.worksheet("Données Journalières")
