@@ -11,7 +11,8 @@ from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     filters,
-    ContextTypes
+    ContextTypes,
+    JobQueue
 )
 
 # Chargement de la configuration
@@ -73,7 +74,6 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(pending_images.keys()):
         images = pending_images[user_id]
         if (now - images["timestamp"]).total_seconds() > REPLY_DELAY * 60:
-            # Traiter les images
             results = []
             for file_path in images["files"]:
                 res = extract_info_from_image(file_path)
