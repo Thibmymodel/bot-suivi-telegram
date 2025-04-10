@@ -1,7 +1,6 @@
 {
-  "telegram_token": "7627601916:AAG4YNKUs277RHKP4qzRzfQLVMJJkFLMntc",
-  "google_sheet_id": "1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE",
-  "admin_id": 5962019553,
+  "telegram_token": "7627601916:AAHoCOA3MxpHQxjSz4WA2eIvWJrby6ty0d4",
   "group_id": -1002317321058,
-  "reply_delay_minutes": 10
+  "reply_delay_minutes": 10,
+  "google_sheet_id": "1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE"
 }
