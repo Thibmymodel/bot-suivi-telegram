@@ -10,16 +10,23 @@ from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
+    ContextTypes,
+    CommandHandler,
     filters,
-    ContextTypes
+    Application
 )
+from fastapi import FastAPI, Request
+import uvicorn
 
-# Chargement de la configuration
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROUP_ID = int(os.environ.get("TELEGRAM_GROUP_ID"))
-REPLY_DELAY = 10  # minutes par défaut
+# Configuration FastAPI pour le webhook
+app_fastapi = FastAPI()
 
-# Chargement sécurisé des identifiants Google depuis Render (clé JSON sous forme de string)
+# Configuration manuelle des tokens (à défaut des variables Render)
+BOT_TOKEN = "7627601916:AAHoCOA3MxpHQxjSz4WA2eIvWJrby6ty0d4"
+GROUP_ID = -1002317321058
+REPLY_DELAY = 10  # minutes
+
+# Chargement des identifiants Google depuis Render (clé JSON sous forme de string)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 try:
@@ -29,11 +36,12 @@ except Exception as e:
     print(f"Erreur lors du chargement des identifiants Google : {e}")
     raise
 
+# Accès Google Sheet
 gc = gspread.authorize(credentials)
-sheet = gc.open_by_key(os.environ.get("SPREADSHEET_ID"))
+sheet = gc.open_by_key("1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
 worksheet = sheet.worksheet("Données Journalières")
 
-# Dictionnaire pour stocker les messages en attente de traitement
+# Stockage des images temporaires
 pending_images = {}
 
 # OCR utilitaire
@@ -67,7 +75,7 @@ def extract_info_from_image(image_path):
         print(f"Erreur OCR: {e}")
         return "Inconnu", "inconnu", -1
 
-# Traitement différé
+# Tâche de fond pour traiter les images
 async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for user_id in list(pending_images.keys()):
@@ -106,8 +114,20 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
     pending_images[user_id]["files"].append(file_path)
 
-# Initialisation du bot
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-app.job_queue.run_repeating(handle_pending, interval=60)
-app.run_polling()
+# Initialisation de l'application Telegram
+bot_app = Application.builder().token(BOT_TOKEN).build()
+bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+bot_app.job_queue.run_repeating(handle_pending, interval=60)
+
+# Endpoint webhook (appelé par Telegram)
+@app_fastapi.post("/webhook")
+async def telegram_webhook(req: Request):
+    body = await req.json()
+    update = Update.de_json(body, bot_app.bot)
+    await bot_app.process_update(update)
+    return {"status": "ok"}
+
+# Lancement local uniquement pour test
+if __name__ == "__main__":
+    print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
+    uvicorn.run("main:app_fastapi", host="0.0.0.0", port=8000, reload=True)
