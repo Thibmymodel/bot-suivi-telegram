@@ -119,6 +119,15 @@ bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 bot_app.job_queue.run_repeating(handle_pending, interval=60)
 
+# Lancement asynchrone de bot_app
+import asyncio
+async def run_bot():
+    await bot_app.initialize()
+    await bot_app.start()
+    print("🤖 Bot Telegram prêt à recevoir les mises à jour via webhook")
+
+asyncio.get_event_loop().create_task(run_bot())
+
 # Endpoint webhook (appelé par Telegram)
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):

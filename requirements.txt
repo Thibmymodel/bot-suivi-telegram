@@ -3,3 +3,6 @@ pillow
 pytesseract
 gspread
 oauth2client
+fastapi
+uvicorn
+
