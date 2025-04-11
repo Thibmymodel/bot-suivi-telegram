@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: bot-suivi-telegram
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python main.py"
