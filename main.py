@@ -5,7 +5,7 @@ from PIL import Image
 import logging
 import gspread
 from datetime import datetime, timedelta
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,20 +15,22 @@ from telegram.ext import (
 )
 
 # Chargement de la configuration
-with open("config.json", "r") as f:
-    config = json.load(f)
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GROUP_ID = int(os.environ.get("TELEGRAM_GROUP_ID"))
+REPLY_DELAY = 10  # minutes par défaut
 
-TOKEN = config.get("telegram_token") or os.environ.get("TELEGRAM_BOT_TOKEN")
-GROUP_ID = config["group_id"]
-REPLY_DELAY = config.get("reply_delay_minutes", 10)
+# Chargement sécurisé des identifiants Google depuis Render (clé JSON sous forme de string)
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+try:
+    credentials_dict = json.loads(credentials_json)
+    credentials = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+except Exception as e:
+    print(f"Erreur lors du chargement des identifiants Google : {e}")
+    raise
 
-# Configuration de Google Sheets via variable d’environnement
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials_json = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-credentials_dict = json.loads(credentials_json)
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
-sheet = gc.open_by_key(config["google_sheet_id"])
+sheet = gc.open_by_key(os.environ.get("SPREADSHEET_ID"))
 worksheet = sheet.worksheet("Données Journalières")
 
 # Dictionnaire pour stocker les messages en attente de traitement
@@ -40,13 +42,11 @@ def extract_info_from_image(image_path):
         img = Image.open(image_path)
         text = pytesseract.image_to_string(img)
 
-        # Recherche du réseau
         network = "Instagram" if "instagram" in text.lower() else (
             "Twitter" if "twitter" in text.lower() else (
             "Threads" if "threads" in text.lower() else (
             "TikTok" if "tiktok" in text.lower() else "Inconnu")))
 
-        # Recherche du nombre d'abonnés
         lines = text.split("\n")
         account = "inconnu"
         followers = -1
@@ -73,7 +73,6 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(pending_images.keys()):
         images = pending_images[user_id]
         if (now - images["timestamp"]).total_seconds() > REPLY_DELAY * 60:
-            # Traiter les images
             results = []
             for file_path in images["files"]:
                 res = extract_info_from_image(file_path)
