@@ -17,26 +17,26 @@ import uvicorn
 import threading
 import asyncio
 
+# Initialisation FastAPI
 app_fastapi = FastAPI()
 
-# Configurations environnement
+# Chargement des variables Render
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 REPLY_DELAY = 5  # minutes
 
-# Tesseract info
+# Tesseract version
 print("VERSION TESSERACT ➜", os.popen("tesseract --version").read())
 
 # Auth Google Sheets
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-credentials_dict = json.loads(credentials_json)
-credentials = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+credentials = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
 gc = gspread.authorize(credentials)
 worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 
-# Stockage images
+# Stockage des images à traiter
 pending_images = {}
 
 def try_ocr_variants(image_path):
@@ -78,7 +78,7 @@ def extract_info_from_image(image_path):
             network = "TikTok"
         elif "twitter" in text_lower or "tweets" in text_lower:
             network = "Twitter"
-        elif "followers" in text_lower or "suivis" in text_lower:
+        elif "followers" in text_lower or "suivis" in text_lower or "publications" in text_lower:
             network = "Instagram"
         else:
             network = "Inconnu"
@@ -155,12 +155,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
     pending_images[user_id]["files"].append(file_path)
 
-# Initialisation bot
+# Initialisation du bot Telegram
 bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
 
-# Webhook : déclenché par Telegram
+# Webhook déclenché par Telegram
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):
     body = await req.json()
@@ -168,7 +168,7 @@ async def telegram_webhook(req: Request):
     await bot_app.process_update(update)
     return {"status": "ok"}
 
-# Démarrage du bot dans un thread (évite les conflits d’event loop avec FastAPI)
+# Démarrage dans un thread
 def start_bot():
     async def _run():
         await bot_app.initialize()
