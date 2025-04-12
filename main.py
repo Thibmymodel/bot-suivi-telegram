@@ -2,52 +2,46 @@ import os
 import json
 import pytesseract
 from PIL import Image, ImageEnhance, ImageOps
-from datetime import datetime
 import logging
 import gspread
+from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from telegram import Update
 from telegram.ext import (
     Application,
-    ApplicationBuilder,
     MessageHandler,
     ContextTypes,
-    filters
+    CommandHandler,
+    filters,
 )
 from fastapi import FastAPI, Request
-import uvicorn
 import asyncio
 import threading
 
-# -------------------------------
-# 📦 Configuration des variables
-# -------------------------------
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "MISSING_BOT_TOKEN")
-GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "-1"))
+# === CONFIGURATION ===
+BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+GROUP_ID = int(os.environ["TELEGRAM_GROUP_ID"])
+SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 REPLY_DELAY = 5  # minutes
 
-print("VERSION TESSERACT ➜", os.popen("tesseract --version").read())
+# === FASTAPI ===
+app_fastapi = FastAPI()
 
-# -------------------------------
-# 🔐 Authentification Google Sheets
-# -------------------------------
+# === GOOGLE SHEET ===
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+
 try:
-    credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not credentials_json:
-        raise ValueError("Clé GOOGLE_APPLICATION_CREDENTIALS_JSON manquante")
     credentials_dict = json.loads(credentials_json)
     credentials = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
     gc = gspread.authorize(credentials)
-    sheet = gc.open_by_key(os.getenv("SPREADSHEET_ID"))
+    sheet = gc.open_by_key(SPREADSHEET_ID)
     worksheet = sheet.worksheet("Données Journalières")
 except Exception as e:
-    print(f"❌ Erreur d'accès à Google Sheets : {e}")
+    print("❌ Erreur initialisation Google Sheets :", e)
     raise
 
-# -------------------------------
-# 🧠 OCR adaptatif
-# -------------------------------
+# === OCR Utils ===
 def try_ocr_variants(image_path):
     try:
         img = Image.open(image_path)
@@ -60,103 +54,91 @@ def try_ocr_variants(image_path):
         ]
         for variant in variants:
             text = pytesseract.image_to_string(variant, lang="eng+fra")
-            if any(word in text.lower() for word in ["followers", "abonnés", "suivis", "publications"]):
+            if any(x in text.lower() for x in ["followers", "abonnés", "suivi", "publications"]):
                 return text
+        return None
     except Exception as e:
-        print(f"❌ Erreur OCR : {e}")
-    return None
+        print("❌ OCR error :", e)
+        return None
 
-# -------------------------------
-# 🔍 Extraction depuis l’image
-# -------------------------------
 def extract_info_from_image(image_path):
-    text = try_ocr_variants(image_path)
-    if not text:
+    try:
+        text = try_ocr_variants(image_path)
+        if not text:
+            return "inconnu", "ECHEC OCR ❌", -1
+
+        lines = text.split("\n")
+        text_lower = text.lower()
+
+        if "threads" in text_lower:
+            network = "Threads"
+        elif "tiktok" in text_lower or "j'aime" in text_lower:
+            network = "TikTok"
+        elif "twitter" in text_lower:
+            network = "Twitter"
+        elif "followers" in text_lower or "publications" in text_lower:
+            network = "Instagram"
+        else:
+            network = "inconnu"
+
+        account, followers = "inconnu", -1
+        for line in lines:
+            if "@" in line and account == "inconnu":
+                account = line.strip().split()[0]
+            if "abonné" in line.lower() or "followers" in line.lower():
+                digits = ''.join([c if c.isdigit() or c in "kKmM.," else '' for c in line])
+                digits = digits.replace(',', '.')
+                if 'k' in digits.lower():
+                    followers = int(float(digits.lower().replace('k','')) * 1000)
+                elif 'm' in digits.lower():
+                    followers = int(float(digits.lower().replace('m','')) * 1000000)
+                elif digits:
+                    followers = int(float(digits))
+
+        if account == "inconnu" or followers == -1:
+            account = "ECHEC OCR ❌"
+        return network, account, followers
+    except Exception as e:
+        print("❌ extract_info_from_image:", e)
         return "inconnu", "ECHEC OCR ❌", -1
 
-    print("======== TEXTE OCR DÉTECTÉ =========")
-    print(text)
-    print("====================================")
-
-    network, account, followers = "inconnu", "inconnu", -1
-    lines = text.splitlines()
-    text_lower = text.lower()
-
-    if "threads" in text_lower:
-        network = "Threads"
-    elif "tiktok" in text_lower:
-        network = "TikTok"
-    elif "twitter" in text_lower or "tweets" in text_lower:
-        network = "Twitter"
-    elif "followers" in text_lower or "suivi" in text_lower or "publications" in text_lower:
-        network = "Instagram"
-
-    for line in lines:
-        if "@" in line and account == "inconnu":
-            account = line.strip().split()[0]
-        if any(keyword in line.lower() for keyword in ["followers", "abonnés"]):
-            digits = ''.join([c if c.isdigit() or c in "kKmM.," else '' for c in line]).replace(",", ".")
-            if 'k' in digits.lower():
-                followers = int(float(digits.lower().replace("k", "")) * 1000)
-            elif 'm' in digits.lower():
-                followers = int(float(digits.lower().replace("m", "")) * 1000000)
-            elif digits:
-                followers = int(float(digits))
-
-    if account == "inconnu" or followers == -1:
-        account = "ECHEC OCR ❌"
-
-    return network, account, followers
-
-# -------------------------------
-# 📈 Lecture de l’évolution J-1
-# -------------------------------
 def get_previous_count(account_name):
     try:
-        all_rows = worksheet.get_all_records()
-        for row in reversed(all_rows):
-            if row.get("Compte") == account_name and isinstance(row.get("Abonnés"), int):
-                return row["Abonnés"]
+        records = worksheet.get_all_records()
+        for row in reversed(records):
+            if row.get("Compte") == account_name and int(row.get("Abonnés", 0)) > 0:
+                return int(row["Abonnés"])
     except Exception as e:
-        print(f"❌ Erreur lecture ancienne valeur : {e}")
+        print("⚠️ Erreur récupération valeur précédente :", e)
     return 0
 
-# -------------------------------
-# 🧠 Traitement des images
-# -------------------------------
+# === IMAGES PENDING ===
 pending_images = {}
 
+# === BACKGROUND JOB ===
 async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for user_id in list(pending_images.keys()):
-        user_data = pending_images[user_id]
-        if (now - user_data["timestamp"]).total_seconds() > REPLY_DELAY * 60:
+        images = pending_images[user_id]
+        if (now - images["timestamp"]).total_seconds() > REPLY_DELAY * 60:
             results = []
-            for file_path in user_data["files"]:
+            for file_path in images["files"]:
                 res = extract_info_from_image(file_path)
                 today = datetime.now().strftime("%Y-%m-%d")
-
                 try:
                     all_rows = worksheet.get_all_records()
-                    if any(r.get("Date") == today and r.get("Compte") == res[1] for r in all_rows):
-                        continue
                 except Exception as e:
-                    print(f"❌ Erreur lecture ligne existante : {e}")
-
-                previous = get_previous_count(res[1])
-                evolution = res[2] - previous if res[2] > 0 else 0
-
+                    print("❌ Lecture Google Sheet échouée :", e)
+                    continue
+                if any(r.get("Date") == today and r.get("Compte") == res[1] for r in all_rows):
+                    print("🟡 Doublon ignoré :", res[1])
+                    continue
                 try:
-                    username = "@inconnu"
-                    try:
-                        user = await context.bot.get_chat(user_id)
-                        username = f"@{user.username}" if user.username else "@inconnu"
-                    except Exception:
-                        pass
-
+                    previous = get_previous_count(res[1])
+                    evolution = res[2] - previous if res[2] > 0 else 0
                     worksheet.append_row([
                         today,
-                        username,
+                        context.bot.get_chat(user_id).username or "Inconnu",
                         res[0],
                         res[1],
                         res[2],
@@ -164,73 +146,59 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                     ])
                     results.append(res)
                 except Exception as e:
-                    print(f"❌ Erreur ajout Google Sheet : {e}")
-
+                    print("❌ Ajout Google Sheet échoué :", e)
             if results:
-                await context.bot.send_message(chat_id=user_id, text=f"🤖 {today} – {len(results)} comptes détectés et ajoutés ✅")
+                msg = f"🤖 {datetime.now().strftime('%d/%m')} – {len(results)} comptes détectés et ajoutés ✅"
+                await context.bot.send_message(chat_id=user_id, text=msg)
             del pending_images[user_id]
 
-# -------------------------------
-# 🖼️ Gestion des images Telegram
-# -------------------------------
+# === IMAGE HANDLER ===
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if update.message.chat_id != GROUP_ID:
+        if update.message.chat_id != GROUP_ID or not update.message.photo:
             return
-        if not update.message.photo:
-            return
-
+        user_id = update.message.chat_id
         file = await context.bot.get_file(update.message.photo[-1].file_id)
         file_path = f"temp_{update.message.message_id}.jpg"
         await file.download_to_drive(file_path)
-
-        user_id = update.message.chat_id
-        print(f"📸 Image reçue et stockée : {file_path}")
-
         if user_id not in pending_images:
             pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
         pending_images[user_id]["files"].append(file_path)
-
+        print("📸 Image téléchargée :", file_path)
     except Exception as e:
-        print(f"❌ Erreur lors du téléchargement de l’image : {e}")
+        print("❌ Erreur handle_image :", e)
 
-# -------------------------------
-# 🤖 Bot Telegram + thread sécurisé
-# -------------------------------
-app = Application.builder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
+# === TELEGRAM SETUP ===
+bot_app = Application.builder().token(BOT_TOKEN).build()
+bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
 
+# === START TELEGRAM BOT IN THREAD ===
 async def run_bot():
-    await app.initialize()
-    await app.start()
-    print("🤖 Bot Telegram prêt à recevoir les mises à jour via webhook")
+    await bot_app.initialize()
+    await bot_app.start()
+    print("✅ Bot Telegram prêt à recevoir les mises à jour via webhook")
 
-# Thread sécurisé pour Render
 def start_bot():
     asyncio.run(run_bot())
 
 threading.Thread(target=start_bot).start()
 
-# -------------------------------
-# 🌐 Webhook FastAPI
-# -------------------------------
-app_fastapi = FastAPI()
-
+# === FASTAPI WEBHOOK ENDPOINT ===
 @app_fastapi.post("/webhook")
-async def telegram_webhook(request: Request):
+async def telegram_webhook(req: Request):
     try:
-        body = await request.json()
-        update = Update.de_json(body, app.bot)
-        await app.process_update(update)
+        body = await req.json()
+        update = Update.de_json(body, bot_app.bot)
+        await bot_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-        print(f"❌ Erreur webhook Telegram : {e}")
+        print("❌ Erreur dans /webhook :", e)
         return {"status": "error"}
 
-# -------------------------------
-# 🚀 Lancement local
-# -------------------------------
+# === LOOP FOR RENDER TO KEEP SERVICE ALIVE ===
 if __name__ == "__main__":
-    print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
-    uvicorn.run(app_fastapi, host="0.0.0.0", port=8000, reload=True)
+    print("✅ Bot lancé avec succès et maintenu actif.")
+    import time
+    while True:
+        time.sleep(3600)
