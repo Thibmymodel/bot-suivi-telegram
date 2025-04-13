@@ -1,20 +1,10 @@
-# OCR
-pytesseract==0.3.10
-Pillow==10.2.0
-
-# Telegram bot avec JobQueue
 python-telegram-bot[job-queue]==20.8
-
-# FastAPI et serveur webhook
 fastapi==0.110.1
 uvicorn==0.29.0
-
-# Google API (si utilisé plus tard)
+pytesseract==0.3.10
+Pillow==10.2.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
-gspread==5.12.0
-oauthlib==3.2.2
 requests-oauthlib==2.0.0
-
-# OCR / Tesseract utils
-poppler-utils
+requests==2.32.3
+aiohttp==3.9.3

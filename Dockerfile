@@ -1,23 +1,27 @@
 FROM python:3.11-slim
 
-# Installer Tesseract et les dépendances système
+# Install tesseract and dependencies
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
+    tesseract-ocr-fra \
+    tesseract-ocr-eng \
     libtesseract-dev \
     libleptonica-dev \
     poppler-utils \
-    ttf-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
-# Définir le dossier de travail
+# Set workdir
 WORKDIR /app
 
-# Copier les dépendances
+# Copy requirements and install them
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copier tout le reste de l'app
+# Copy all files
 COPY . .
 
-# Lancer l'application
+# Expose FastAPI port
+EXPOSE 8000
+
+# Launch
 CMD ["python", "main.py"]
