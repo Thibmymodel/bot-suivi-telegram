@@ -1,26 +1,26 @@
-
 import os
 import json
 import logging
-import asyncio
-import threading
 from datetime import datetime
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import (
     Application, ApplicationBuilder, ContextTypes, MessageHandler, filters
 )
+import asyncio
 import pytesseract
 from PIL import Image, ImageEnhance, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials
+import threading
 
 # === CONFIGURATION ===
 BOT_TOKEN = "7627601916:AAHoCOA3MxpHQxjSz4WA2eIvWJrby6ty0d4"
 GROUP_ID = -1002317321058
-REPLY_DELAY = 5  # en minutes
+REPLY_DELAY = 5  # minutes
+WEBHOOK_URL = "https://bot-suivi-telegram.onrender.com/webhook"
 
-# === GOOGLE SHEETS ===
+# === GOOGLE SHEET ===
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 credentials = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
@@ -78,8 +78,10 @@ def extract_info_from_image(image_path):
                 followers = int(float(digits.lower().replace('m','')) * 1_000_000)
             elif digits:
                 followers = int(float(digits))
+
     if account == "inconnu" or followers == -1:
         return "Inconnu", "ECHEC OCR ❌", -1
+
     return network, account, followers
 
 def get_previous_count(account_name):
@@ -89,7 +91,7 @@ def get_previous_count(account_name):
             if row['Compte'] == account_name and row['Abonnés'] > 0:
                 return row['Abonnés']
     except Exception as e:
-        print("Erreur récupération anciens abonnés :", e)
+        print(f"Erreur get_previous_count : {e}")
     return 0
 
 # === TELEGRAM ===
@@ -110,7 +112,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
         pending_images[user_id]["files"].append(file_path)
     except Exception as e:
-        print("Erreur téléchargement image :", e)
+        print(f"Erreur téléchargement image : {e}")
 
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
@@ -134,11 +136,9 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 previous = get_previous_count(res[1])
                 evolution = res[2] - previous if res[2] > 0 else 0
                 try:
-                    chat = await context.bot.get_chat(user_id)
-                    username = f"@{chat.username}" if chat.username else "Inconnu"
                     worksheet.append_row([
                         today,
-                        username,
+                        context.bot.get_chat(user_id).username or "@inconnu",
                         res[0],
                         res[1],
                         res[2],
@@ -155,18 +155,21 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 print("Erreur message Telegram :", e)
             del pending_images[user_id]
 
-# === START BOT ===
+# === DÉMARRAGE DU BOT EN THREAD SÉPARÉ ===
 def start_bot():
-    async def bot_runner():
+    async def inner():
         await bot_app.initialize()
         await bot_app.start()
+        await bot_app.bot.set_webhook(url=WEBHOOK_URL)
         bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
         print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
-    asyncio.run(bot_runner())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(inner())
 
 threading.Thread(target=start_bot).start()
 
-# === FASTAPI ENDPOINT POUR WEBHOOK ===
+# === FASTAPI POUR LE WEBHOOK ===
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):
     try:
@@ -174,10 +177,10 @@ async def telegram_webhook(req: Request):
         update = Update.de_json(body, bot_app.bot)
         await bot_app.process_update(update)
     except Exception as e:
-        print("Erreur webhook FastAPI :", e)
+        print(f"Erreur webhook FastAPI : {e}")
     return {"status": "ok"}
 
-# === DÉPLOIEMENT LOCAL ===
+# === LANCEMENT LOCAL POUR TEST ===
 if __name__ == "__main__":
     import uvicorn
     print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
