@@ -1,39 +1,42 @@
 import os
 import json
 import logging
-import asyncio
-import threading
 from datetime import datetime
 from fastapi import FastAPI, Request
 from telegram import Update
-from telegram.ext import (
-    Application, MessageHandler, filters, ContextTypes
-)
-from PIL import Image, ImageEnhance, ImageOps
+from telegram.ext import Application, ContextTypes, MessageHandler, filters
+import asyncio
 import pytesseract
+from PIL import Image, ImageEnhance, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # === CONFIGURATION ===
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = -1002317321058
-REPLY_DELAY = 5  # minutes
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+REPLY_DELAY = 3  # minutes
+
+if not BOT_TOKEN:
+    raise ValueError("🚨 TELEGRAM_BOT_TOKEN n'est pas défini dans les variables d'environnement.")
 
 # === GOOGLE SHEETS ===
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+
+if not credentials_json:
+    raise ValueError("🚨 GOOGLE_APPLICATION_CREDENTIALS_JSON n'est pas défini dans les variables d'environnement.")
+
 credentials = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
 gc = gspread.authorize(credentials)
 sheet = gc.open_by_key("1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
 worksheet = sheet.worksheet("Données Journalières")
 
-# === DONNÉES TEMPORAIRES ===
-pending_images = {}
-
-# === APPLICATION FASTAPI ===
+# === APPLICATION & APP FASTAPI ===
+bot_app = Application.builder().token(BOT_TOKEN).build()
 app_fastapi = FastAPI()
 
-# === OCR LOGIC ===
+# === OCR UTILITAIRE ===
 def try_ocr_variants(image_path):
     img = Image.open(image_path)
     variants = [
@@ -93,29 +96,26 @@ def get_previous_count(account_name):
         pass
     return 0
 
-# === INITIALISATION DU BOT TELEGRAM ===
-bot_app = Application.builder().token(BOT_TOKEN).build()
+# === GESTION D'IMAGES TEMPORISÉE ===
+pending_images = {}
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat_id != GROUP_ID:
+    if update.message.chat_id != GROUP_ID or not update.message.photo:
         return
-    if not update.message.photo:
-        return
+
     user_id = update.message.chat_id
-    try:
-        file = await context.bot.get_file(update.message.photo[-1].file_id)
-        file_path = f"temp_{update.message.message_id}.jpg"
-        await file.download_to_drive(file_path)
-        print(f"Image téléchargée : {file_path}")
-        if user_id not in pending_images:
-            pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
-        pending_images[user_id]["files"].append(file_path)
-    except Exception as e:
-        print("Erreur téléchargement image :", e)
+    file = await context.bot.get_file(update.message.photo[-1].file_id)
+    file_path = f"temp_{update.message.message_id}.jpg"
+    await file.download_to_drive(file_path)
+
+    print(f"Image téléchargée : {file_path}")
+    if user_id not in pending_images:
+        pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
+    pending_images[user_id]["files"].append(file_path)
 
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
-async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
+async def handle_pending():
     now = datetime.now()
     for user_id in list(pending_images.keys()):
         images = pending_images[user_id]
@@ -135,13 +135,9 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 previous = get_previous_count(res[1])
                 evolution = res[2] - previous if res[2] > 0 else 0
                 try:
-                    username = context.bot.get_chat(user_id).username or "@inconnu"
-                except:
-                    username = "@inconnu"
-                try:
                     worksheet.append_row([
                         today,
-                        username,
+                        context.bot.get_chat(user_id).username or "@inconnu",
                         res[0],
                         res[1],
                         res[2],
@@ -151,25 +147,26 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     print("Erreur écriture Google Sheet :", e)
 
-            msg = f"🤖 {datetime.now().strftime('%d/%m')} – {len(results)} comptes détectés et ajoutés ✅"
-            try:
-                await context.bot.send_message(chat_id=user_id, text=msg)
-            except Exception as e:
-                print("Erreur message Telegram :", e)
+            if results:
+                msg = f"🤖 {datetime.now().strftime('%d/%m')} – {len(results)} comptes détectés et ajoutés ✅"
+                try:
+                    await bot_app.bot.send_message(chat_id=user_id, text=msg)
+                except Exception as e:
+                    print("Erreur message Telegram :", e)
             del pending_images[user_id]
 
-# === THREAD SÉPARÉ POUR LE BOT ===
-def start_bot():
-    async def inner():
-        await bot_app.initialize()
-        await bot_app.start()
-        bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
-        print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
-    asyncio.run(inner())
+# === INITIALISATION ASYNC DU BOT ===
+async def start_bot():
+    await bot_app.initialize()
+    await bot_app.start()
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(handle_pending, 'interval', minutes=REPLY_DELAY)
+    scheduler.start()
+    print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
 
-threading.Thread(target=start_bot).start()
+asyncio.create_task(start_bot())
 
-# === FASTAPI ENDPOINT POUR LE WEBHOOK ===
+# === FASTAPI POUR WEBHOOK ===
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):
     try:
@@ -180,7 +177,7 @@ async def telegram_webhook(req: Request):
         print("Erreur webhook FastAPI :", e)
     return {"status": "ok"}
 
-# === EXECUTION LOCALE (Render gère déjà Uvicorn) ===
+# === LANCEMENT LOCAL POUR TEST ===
 if __name__ == "__main__":
     import uvicorn
     print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
