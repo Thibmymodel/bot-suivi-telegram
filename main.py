@@ -1,109 +1,152 @@
 import os
+import io
+import time
+import json
 import logging
 import pytesseract
-import shutil
+import datetime
+import asyncio
+import threading
 from fastapi import FastAPI, Request
-from telegram import Update
+from PIL import Image
+from telegram import Update, constants
 from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
-    MessageHandler,
-    filters,
+    Application, ContextTypes, MessageHandler, filters, JobQueue
 )
 from google.oauth2.service_account import Credentials
 import gspread
-import asyncio
-from datetime import datetime
 
-# === CONFIG ===
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-DELAY_SECONDS = 180  # 3 minutes
+# Initialisation des logs
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
-# === SETUP LOGGING ===
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# =================== CONFIGURATION ===================
 
-# === FASTAPI APP ===
-app = FastAPI()
-bot_app = None  # Sera initialisé à la fin
+# Token Telegram (via Secret sur Render)
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# === GOOGLE SHEET ===
-creds = Credentials.from_service_account_file("credentials.json", scopes=["https://www.googleapis.com/auth/spreadsheets"])
-client = gspread.authorize(creds)
-spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE/edit#gid=1190306575")
-sheet = spreadsheet.worksheet("Données")
+# Clé Google Sheets (chargée depuis /etc/secrets/credentials.json sur Render)
+CREDENTIALS_PATH = "/etc/secrets/credentials.json"
 
-# === OCR UTILS ===
-def try_ocr(image_path):
-    langs = ["eng+fra", "fra", "eng"]
+# Nom de la feuille Google Sheets
+SHEET_NAME = "Abonnés"
+WORKSHEET_NAME = "Données"
+
+# Delay OCR en secondes
+OCR_DELAY_SECONDS = 180
+
+# Regex Instagram simple (en fallback si besoin)
+import re
+USERNAME_REGEX = re.compile(r"@?([\w\.]+)")
+FOLLOWERS_REGEX = re.compile(r"([\d.,]+)\s*abonnés", re.IGNORECASE)
+
+# =================== GOOGLE SHEETS ===================
+
+def init_gspread():
+    credentials = Credentials.from_service_account_file(
+        CREDENTIALS_PATH,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(credentials)
+    sh = gc.open(SHEET_NAME)
+    ws = sh.worksheet(WORKSHEET_NAME)
+    return ws
+
+worksheet = init_gspread()
+
+# =================== OCR ADAPTATIF ===================
+
+def try_ocr_variants(image_path: str) -> str:
+    text = ""
+    langs = ["eng+fra", "fra+eng", "eng", "fra"]
     for lang in langs:
         try:
-            text = pytesseract.image_to_string(image_path, lang=lang)
-            if text.strip():
-                return text
+            text = pytesseract.image_to_string(Image.open(image_path), lang=lang)
+            if len(text.strip()) > 10:
+                break
         except Exception as e:
-            logger.warning(f"OCR failed with lang {lang}: {e}")
-    return ""
+            logging.warning(f"OCR failed with lang {lang}: {e}")
+    return text.strip()
 
-def extract_info_from_image(file_path):
-    text = try_ocr(file_path)
-    # Extraction de données personnalisée
-    return "Instagram", "@unknown", 1234  # À remplacer par parsing réel
+def extract_info_from_image(image_path: str):
+    text = try_ocr_variants(image_path)
+    logging.info(f"[OCR] Texte extrait :\n{text}")
 
-# === HANDLER PRINCIPAL ===
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username_match = USERNAME_REGEX.search(text)
+    followers_match = FOLLOWERS_REGEX.search(text)
+
+    username = username_match.group(1) if username_match else "Inconnu"
+    followers_raw = followers_match.group(1).replace(" ", "").replace(",", "").replace(".", "")
+
+    try:
+        followers = int(followers_raw)
+    except ValueError:
+        followers = -1
+
+    return username, followers
+
+# =================== TRAITEMENT DU SCREENSHOT ===================
+
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
 
-    file = await update.message.photo[-1].get_file()
-    file_path = f"temp_{datetime.now().timestamp()}.jpg"
-    await file.download_to_drive(file_path)
-    logger.info(f"Image téléchargée : {file_path}")
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    img_bytes = await file.download_as_bytearray()
+    filename = f"temp_{int(time.time())}.jpg"
 
-    await asyncio.sleep(DELAY_SECONDS)
+    with open(filename, "wb") as f:
+        f.write(img_bytes)
+
+    logging.info(f"[📸] Image téléchargée : {filename}")
+
+    await asyncio.sleep(OCR_DELAY_SECONDS)
 
     try:
-        reseau, username, abonnés = extract_info_from_image(file_path)
+        username, followers = extract_info_from_image(filename)
+        date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        # Envoi confirmation Telegram
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"✅ Données détectées :\nRéseau : {reseau}\nNom : {username}\nAbonnés : {abonnés}"
+        worksheet.append_row([username, followers, date])
+        logging.info(f"[✅] Ajouté à Google Sheets : {username} – {followers}")
+
+        await update.message.reply_text(
+            f"✅ Analyse terminée :\n👤 {username}\n👥 {followers} abonnés"
         )
 
-        # Insertion Google Sheets
-        sheet.append_row([str(datetime.now()), reseau, username, abonnés])
-        logger.info(f"✅ Données ajoutées à Google Sheets pour {username}")
-
     except Exception as e:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Erreur lors du traitement : {e}")
-        logger.error(f"Erreur traitement image : {e}")
-    finally:
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
+        logging.error(f"[❌] Erreur OCR ou Google Sheets : {e}")
+        await update.message.reply_text("❌ Une erreur est survenue lors de l’analyse.")
 
-# === FASTAPI ENDPOINT POUR TELEGRAM ===
+    finally:
+        os.remove(filename)
+
+# =================== FASTAPI + BOT INIT ===================
+
+app = FastAPI()
+bot_app = Application.builder().token(BOT_TOKEN).build()
+
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     data = await req.json()
     update = Update.de_json(data, bot_app.bot)
-    await bot_app.update_queue.put(update)
-    return {"status": "ok"}
+    await bot_app.process_update(update)
+    return {"ok": True}
 
-# === STARTUP FASTAPI + TELEGRAM ===
 @app.on_event("startup")
-async def startup():
-    global bot_app
-    bot_app = (
-        ApplicationBuilder()
-        .token(TOKEN)
-        .concurrent_updates(True)
-        .build()
-    )
-    bot_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+async def on_startup():
+    logging.info("🚀 Lancement local du serveur webhook sur http://localhost:8000")
 
-    await bot_app.initialize()
-    await bot_app.start()
-    logger.info("✅ Bot Telegram prêt à recevoir les mises à jour via webhook")
+    bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+
+    # Lancement dans thread séparé
+    def launch_bot():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot_app.initialize())
+        loop.run_until_complete(bot_app.start())
+        loop.run_until_complete(bot_app.updater.start_polling())  # nécessaire pour JobQueue
+        loop.run_forever()
+
+    threading.Thread(target=launch_bot, daemon=True).start()
