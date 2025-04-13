@@ -12,13 +12,11 @@ import pytesseract
 from PIL import Image, ImageEnhance, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials
-import threading
 
 # === CONFIGURATION ===
 BOT_TOKEN = "7627601916:AAHoCOA3MxpHQxjSz4WA2eIvWJrby6ty0d4"
 GROUP_ID = -1002317321058
 REPLY_DELAY = 5  # minutes
-WEBHOOK_URL = "https://bot-suivi-telegram.onrender.com/webhook"
 
 # === GOOGLE SHEET ===
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -28,11 +26,11 @@ gc = gspread.authorize(credentials)
 sheet = gc.open_by_key("1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
 worksheet = sheet.worksheet("Données Journalières")
 
-# === FASTAPI ===
-app_fastapi = FastAPI()
-
 # === TEMP DATA ===
 pending_images = {}
+
+# === FASTAPI ===
+app_fastapi = FastAPI()
 
 # === OCR LOGIC ===
 def try_ocr_variants(image_path):
@@ -78,7 +76,6 @@ def extract_info_from_image(image_path):
                 followers = int(float(digits.lower().replace('m','')) * 1_000_000)
             elif digits:
                 followers = int(float(digits))
-
     if account == "inconnu" or followers == -1:
         return "Inconnu", "ECHEC OCR ❌", -1
 
@@ -90,29 +87,26 @@ def get_previous_count(account_name):
         for row in reversed(records):
             if row['Compte'] == account_name and row['Abonnés'] > 0:
                 return row['Abonnés']
-    except Exception as e:
-        print(f"Erreur get_previous_count : {e}")
+    except:
+        pass
     return 0
 
 # === TELEGRAM ===
 bot_app = Application.builder().token(BOT_TOKEN).build()
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if update.message.chat_id != GROUP_ID:
-            return
-        if not update.message.photo:
-            return
-        user_id = update.message.chat_id
-        file = await context.bot.get_file(update.message.photo[-1].file_id)
-        file_path = f"temp_{update.message.message_id}.jpg"
-        await file.download_to_drive(file_path)
-        print(f"Image téléchargée : {file_path}")
-        if user_id not in pending_images:
-            pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
-        pending_images[user_id]["files"].append(file_path)
-    except Exception as e:
-        print(f"Erreur téléchargement image : {e}")
+    if update.message.chat_id != GROUP_ID:
+        return
+    if not update.message.photo:
+        return
+    user_id = update.message.chat_id
+    file = await context.bot.get_file(update.message.photo[-1].file_id)
+    file_path = f"temp_{update.message.message_id}.jpg"
+    await file.download_to_drive(file_path)
+    print(f"Image téléchargée : {file_path}")
+    if user_id not in pending_images:
+        pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
+    pending_images[user_id]["files"].append(file_path)
 
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
@@ -132,7 +126,6 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     print("Erreur lecture Google Sheet :", e)
                     continue
-
                 previous = get_previous_count(res[1])
                 evolution = res[2] - previous if res[2] > 0 else 0
                 try:
@@ -147,7 +140,6 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                     results.append(res)
                 except Exception as e:
                     print("Erreur écriture Google Sheet :", e)
-
             msg = f"🤖 {datetime.now().strftime('%d/%m')} – {len(results)} comptes détectés et ajoutés ✅"
             try:
                 await context.bot.send_message(chat_id=user_id, text=msg)
@@ -155,21 +147,14 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 print("Erreur message Telegram :", e)
             del pending_images[user_id]
 
-# === DÉMARRAGE DU BOT EN THREAD SÉPARÉ ===
-def start_bot():
-    async def inner():
-        await bot_app.initialize()
-        await bot_app.start()
-        await bot_app.bot.set_webhook(url=WEBHOOK_URL)
-        bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
-        print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(inner())
+# === INTÉGRATION DANS FASTAPI AU DÉMARRAGE ===
+@app_fastapi.on_event("startup")
+async def on_startup():
+    await bot_app.initialize()
+    bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
+    await bot_app.start()
+    print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
 
-threading.Thread(target=start_bot).start()
-
-# === FASTAPI POUR LE WEBHOOK ===
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):
     try:
@@ -177,10 +162,10 @@ async def telegram_webhook(req: Request):
         update = Update.de_json(body, bot_app.bot)
         await bot_app.process_update(update)
     except Exception as e:
-        print(f"Erreur webhook FastAPI : {e}")
+        print("Erreur webhook FastAPI :", e)
     return {"status": "ok"}
 
-# === LANCEMENT LOCAL POUR TEST ===
+# === DÉPLOIEMENT LOCAL ===
 if __name__ == "__main__":
     import uvicorn
     print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
