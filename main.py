@@ -1,179 +1,192 @@
 import os
 import json
-import asyncio
 import logging
+import asyncio
+import threading
 from datetime import datetime
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import (
-    Application, ApplicationBuilder, MessageHandler, ContextTypes,
-    CommandHandler, filters
+    Application, ApplicationBuilder, ContextTypes,
+    MessageHandler, filters
 )
+import pytesseract
+from PIL import Image, ImageEnhance, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials
-from PIL import Image, ImageEnhance, ImageOps
-import pytesseract
-import threading
 
-# ==================== CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKEN_PAR_DEFAUT")
-GROUP_ID = int(os.getenv("GROUP_ID", -1002317321058))
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
-REPLY_DELAY = int(os.getenv("REPLY_DELAY", 5))  # minutes
-SHEET_NAME = os.getenv("SHEET_NAME", "Données Journalières")
+# === CONFIGURATION ===
+BOT_TOKEN = "7627601916:AAHoCOA3MxpHQxjSz4WA2eIvWJrby6ty0d4"
+GROUP_ID = -1002317321058
+REPLY_DELAY = 5  # minutes
 
-# ==================== GOOGLE SHEET ====================
-try:
-    credentials_json = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-    credentials_dict = json.loads(credentials_json)
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(credentials_dict, scopes=scopes)
-    gc = gspread.authorize(creds)
-    sheet = gc.open_by_key(SPREADSHEET_ID)
-    worksheet = sheet.worksheet(SHEET_NAME)
-except Exception as e:
-    logging.exception("❌ Erreur lors de l'initialisation Google Sheets :")
-    raise
+# === GOOGLE SHEETS ===
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+credentials = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
+gc = gspread.authorize(credentials)
+sheet = gc.open_by_key("1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
+worksheet = sheet.worksheet("Données Journalières")
 
-# ==================== FASTAPI ====================
+# === DONNÉES TEMPORAIRES ===
+pending_images = {}
+
+# === FASTAPI APP ===
 app_fastapi = FastAPI()
 
-@app_fastapi.post("/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot_app.bot)
-        await bot_app.process_update(update)
-    except Exception as e:
-        logging.exception("❌ Erreur webhook :")
-    return {"ok": True}
-
-# ==================== OCR / IMAGE ====================
-def try_ocr_variants(path):
-    try:
-        img = Image.open(path)
-        variants = [
-            img,
-            ImageOps.grayscale(img),
-            ImageEnhance.Contrast(ImageOps.grayscale(img)).enhance(2),
-            ImageOps.invert(ImageOps.grayscale(img)),
-            img.resize((img.size[0]*2, img.size[1]*2))
-        ]
-        for v in variants:
-            txt = pytesseract.image_to_string(v, lang="eng+fra")
-            if any(x in txt.lower() for x in ["followers", "abonnés", "publications", "suivi(e)s"]):
-                return txt
-    except Exception as e:
-        logging.warning("❌ OCR échoué pour l'image : %s", path)
+# === OCR : Lecture intelligente d'image ===
+def try_ocr_variants(image_path):
+    img = Image.open(image_path)
+    variants = [
+        img,
+        ImageOps.grayscale(img),
+        ImageEnhance.Contrast(ImageOps.grayscale(img)).enhance(2),
+        ImageOps.invert(ImageOps.grayscale(img)),
+        img.resize((img.size[0]*2, img.size[1]*2))
+    ]
+    for variant in variants:
+        try:
+            text = pytesseract.image_to_string(variant, lang="eng+fra")
+            if any(x in text.lower() for x in ["followers", "abonnés", "suivis", "publications"]):
+                return text
+        except Exception as e:
+            print(f"Erreur OCR : {e}")
     return None
 
-def extract_info_from_image(path):
-    text = try_ocr_variants(path)
+def extract_info_from_image(image_path):
+    text = try_ocr_variants(image_path)
     if not text:
-        return "inconnu", "ECHEC OCR ❌", -1
+        return "Inconnu", "ECHEC OCR ❌", -1
 
     lines = text.split("\n")
-    network = "Instagram" if "followers" in text.lower() or "suivi" in text.lower() else \
-              "Twitter" if "twitter" in text.lower() or "tweets" in text.lower() else \
-              "TikTok" if "j'aime" in text.lower() else "Threads" if "threads" in text.lower() else "inconnu"
+    text_lower = text.lower()
 
-    account = next((l.strip().split()[0] for l in lines if "@" in l), "inconnu")
-    followers = -1
+    if "threads" in text_lower:
+        network = "Threads"
+    elif "tiktok" in text_lower or "j'aime" in text_lower:
+        network = "TikTok"
+    elif "twitter" in text_lower or "tweets" in text_lower:
+        network = "Twitter"
+    else:
+        network = "Instagram"
 
-    for l in lines:
-        if any(x in l.lower() for x in ["abonnés", "followers"]):
-            try:
-                digits = ''.join(c if c.isdigit() or c in ",.kKmM" else "" for c in l).replace(",", ".")
-                if "k" in digits.lower():
-                    followers = int(float(digits.lower().replace("k", "")) * 1000)
-                elif "m" in digits.lower():
-                    followers = int(float(digits.lower().replace("m", "")) * 1_000_000)
-                else:
+    account, followers = "inconnu", -1
+    for line in lines:
+        if "@" in line and account == "inconnu":
+            account = line.strip().split()[0]
+        if any(x in line.lower() for x in ["followers", "abonnés"]):
+            digits = ''.join([c if c.isdigit() or c in "kKmM.," else '' for c in line]).replace(",", ".")
+            if 'k' in digits.lower():
+                followers = int(float(digits.lower().replace('k','')) * 1000)
+            elif 'm' in digits.lower():
+                followers = int(float(digits.lower().replace('m','')) * 1_000_000)
+            elif digits:
+                try:
                     followers = int(float(digits))
-            except:
-                followers = -1
-            break
+                except:
+                    followers = -1
 
     if account == "inconnu" or followers == -1:
-        return network, "ECHEC OCR ❌", -1
-    return network, account, followers
+        return "Inconnu", "ECHEC OCR ❌", -1
 
-# ==================== STOCKAGE & ÉTAT ====================
-pending_images = {}
+    return network, account, followers
 
 def get_previous_count(account_name):
     try:
         records = worksheet.get_all_records()
         for row in reversed(records):
-            if row.get('Compte') == account_name and int(row.get('Abonnés', 0)) > 0:
-                return int(row['Abonnés'])
+            if row['Compte'] == account_name and row['Abonnés'] > 0:
+                return row['Abonnés']
     except Exception as e:
-        logging.warning("⚠️ Erreur lecture ancienne valeur : %s", e)
+        print("Erreur récupération anciens abonnés :", e)
     return 0
 
-# ==================== HANDLER IMAGE ====================
+# === INITIALISATION DU BOT TELEGRAM ===
+bot_app = Application.builder().token(BOT_TOKEN).build()
+
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat_id != GROUP_ID or not update.message.photo:
         return
-
     try:
         file = await context.bot.get_file(update.message.photo[-1].file_id)
-        path = f"temp_{update.message.message_id}.jpg"
-        await file.download_to_drive(path)
+        file_path = f"temp_{update.message.message_id}.jpg"
+        await file.download_to_drive(file_path)
+        print(f"Image téléchargée : {file_path}")
 
-        logging.info(f"📸 Image téléchargée : {path}")
-
-        if GROUP_ID not in pending_images:
-            pending_images[GROUP_ID] = {"files": [], "timestamp": datetime.now()}
-        pending_images[GROUP_ID]["files"].append(path)
+        user_id = update.message.chat_id
+        if user_id not in pending_images:
+            pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
+        pending_images[user_id]["files"].append(file_path)
     except Exception as e:
-        logging.exception("❌ Erreur téléchargement image Telegram :")
+        print("Erreur téléchargement image :", e)
 
-# ==================== TRAITEMENT IMAGES ====================
+bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+
 async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
-    for uid, data in list(pending_images.items()):
-        if (now - data["timestamp"]).total_seconds() < REPLY_DELAY * 60:
-            continue
+    for user_id in list(pending_images.keys()):
+        data = pending_images[user_id]
+        if (now - data["timestamp"]).total_seconds() > REPLY_DELAY * 60:
+            results = []
+            for file_path in data["files"]:
+                res = extract_info_from_image(file_path)
+                today = datetime.now().strftime("%Y-%m-%d")
 
-        count = 0
-        for path in data["files"]:
-            net, acc, foll = extract_info_from_image(path)
-            if acc == "ECHEC OCR ❌":
-                continue
+                try:
+                    all_rows = worksheet.get_all_records()
+                    if any(r.get('Date') == today and r.get('Compte') == res[1] for r in all_rows):
+                        continue
+                except Exception as e:
+                    print("Erreur lecture feuille :", e)
+                    continue
 
-            today = datetime.now().strftime("%Y-%m-%d")
-            rows = worksheet.get_all_records()
-            if any(r.get("Date") == today and r.get("Compte") == acc for r in rows):
-                continue
+                try:
+                    previous = get_previous_count(res[1])
+                    evolution = res[2] - previous if res[2] > 0 else 0
+                    assistant = context.bot.get_chat(user_id).username or "@inconnu"
+                    worksheet.append_row([
+                        today, assistant, res[0], res[1], res[2], evolution
+                    ])
+                    results.append(res)
+                except Exception as e:
+                    print("Erreur écriture Google Sheet :", e)
 
             try:
-                delta = foll - get_previous_count(acc) if foll > 0 else 0
-                assistant = context.bot.get_chat(uid).username or "Inconnu"
-                worksheet.append_row([today, assistant, net, acc, foll, delta])
-                count += 1
+                msg = f"🤖 {datetime.now().strftime('%d/%m')} – {len(results)} comptes détectés et ajoutés ✅"
+                await context.bot.send_message(chat_id=user_id, text=msg)
             except Exception as e:
-                logging.warning("⚠️ Erreur ajout ligne Google Sheet : %s", e)
+                print("Erreur message Telegram :", e)
 
-        if count:
-            await context.bot.send_message(chat_id=uid, text=f"🤖 {today} – {count} comptes détectés et ajoutés ✅")
-        del pending_images[uid]
+            del pending_images[user_id]
 
-# ==================== LANCEMENT DU BOT ====================
-bot_app = Application.builder().token(BOT_TOKEN).build()
-bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
-
-# ==================== THREAD ASYNC ====================
+# === LANCEMENT DU BOT (THREAD SÉPARÉ) ===
 def start_bot():
-    asyncio.run(bot_app.initialize())
-    asyncio.run(bot_app.start())
-    logging.info("✅ Bot Telegram prêt à recevoir les mises à jour via webhook")
+    async def inner():
+        try:
+            await bot_app.initialize()
+            await bot_app.start()
+            bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
+            print("🟢 Bot Telegram prêt à recevoir les mises à jour via webhook")
+        except Exception as e:
+            print("Erreur lancement bot :", e)
+
+    asyncio.run(inner())
 
 threading.Thread(target=start_bot).start()
 
-# ==================== LANCEMENT LOCAL ====================
+# === ENDPOINT FASTAPI POUR LE WEBHOOK ===
+@app_fastapi.post("/webhook")
+async def telegram_webhook(req: Request):
+    try:
+        body = await req.json()
+        update = Update.de_json(body, bot_app.bot)
+        await bot_app.process_update(update)
+    except Exception as e:
+        print("Erreur webhook FastAPI :", e)
+    return {"status": "ok"}
+
+# === LANCEMENT LOCAL ===
 if __name__ == "__main__":
     import uvicorn
-    logging.info("🚀 Lancement local du serveur webhook sur http://localhost:8000")
+    print("🚀 Lancement local du serveur webhook sur http://localhost:8000")
     uvicorn.run("main:app_fastapi", host="0.0.0.0", port=8000, reload=True)
