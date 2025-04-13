@@ -1,22 +1,23 @@
 FROM python:3.11-slim
 
-# Install system dependencies for tesseract
+# Installer Tesseract et les dépendances système
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     libleptonica-dev \
     poppler-utils \
+    ttf-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Définir le dossier de travail
 WORKDIR /app
 
-# Copy requirements and install
+# Copier les dépendances
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app source
+# Copier tout le reste de l'app
 COPY . .
 
-# Default command
+# Lancer l'application
 CMD ["python", "main.py"]
