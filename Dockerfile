@@ -1,28 +1,29 @@
-FROM debian:bullseye-slim
+# Image de base avec apt complet pour Render
+FROM python:3.11-slim
 
-# Installation de Python et Tesseract
+# Préparation des outils système
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
     tesseract-ocr \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Définir le dossier de travail
+# Création du répertoire de travail
 WORKDIR /app
 
-# Copier les fichiers du projet
-COPY . .
+# Copie du code
+COPY . /app
 
-# Installer les dépendances Python
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Installation des dépendances Python
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Port utilisé par FastAPI
-EXPOSE 10000
+# Définir le port pour Render
+ENV PORT=10000
+EXPOSE $PORT
 
-# Démarrer l'app
-CMD ["uvicorn", "main:app_fastapi", "--host", "0.0.0.0", "--port", "10000"]
+# Commande de démarrage
+CMD ["python", "main.py"]
