@@ -7,11 +7,8 @@ import logging
 import datetime
 import httpx
 from PIL import Image
-from fastapi import FastAPI, Request
-from fastapi import Response
+from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
-from fastapi import status
-from fastapi.lifespan import Lifespan
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.ext import Defaults, CallbackContext
@@ -39,8 +36,11 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # Création de l'application FastAPI et Telegram
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Initialisation FastAPI avec lifespan handler (nouveau système)
-async def lifespan(app: FastAPI):
+# Initialisation FastAPI sans Lifespan (retour version stable)
+app_fastapi = FastAPI()
+
+@app_fastapi.on_event("startup")
+async def on_startup():
     try:
         async with httpx.AsyncClient() as client:
             url = f"{BASE_URL}/setWebhook"
@@ -50,11 +50,12 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ Webhook Telegram configuré.")
             else:
                 logger.warning(f"⚠️ Webhook non configuré. Code HTTP: {response.status_code}")
-        yield
-    finally:
-        logger.info("🛑 Arrêt du bot Telegram.")
+    except Exception as e:
+        logger.error("Erreur lors de la configuration du webhook", exc_info=True)
 
-app_fastapi = FastAPI(lifespan=lifespan)
+@app_fastapi.on_event("shutdown")
+async def on_shutdown():
+    logger.info("🛑 Arrêt du bot Telegram.")
 
 # ----------- Fonctions principales -----------
 
