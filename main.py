@@ -16,11 +16,12 @@ from telegram.ext import Defaults, CallbackContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Détection automatique du chemin de tesseract
-TESSERACT_PATH = shutil.which("tesseract")
-if not TESSERACT_PATH:
-    raise RuntimeError("❌ Tesseract n'est pas trouvé dans le PATH.")
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+# Forcer chemin vers Tesseract
+TESSERACT_PATH = "/usr/bin/tesseract"
+if not os.path.exists(TESSERACT_PATH):
+    logger.warning("❌ Tesseract introuvable à /usr/bin/tesseract. L'OCR échouera.")
+else:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # Configuration du bot Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
