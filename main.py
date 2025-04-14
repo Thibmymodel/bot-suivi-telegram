@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import (
-    Application, ApplicationBuilder, ContextTypes, MessageHandler, filters
+    ApplicationBuilder, ContextTypes, MessageHandler, filters
 )
 from PIL import Image, ImageOps, ImageEnhance
 import pytesseract
@@ -26,10 +26,10 @@ credentials = Credentials.from_service_account_info(json.loads(CREDENTIALS_JSON)
 gc = gspread.authorize(credentials)
 worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 
-# === APPLICATIONS ===
+# === APP & VARIABLES ===
 app_fastapi = FastAPI()
+bot_app = None
 pending_images = {}
-bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 # === OCR UTILS ===
 def try_ocr_variants(image_path):
@@ -107,8 +107,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_images[user_id] = {"files": [], "timestamp": datetime.now()}
     pending_images[user_id]["files"].append(file_path)
 
-bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-
 # === PENDING TASKS ===
 async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
@@ -147,19 +145,26 @@ async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
                 print("Erreur envoi Telegram :", e)
             del pending_images[user_id]
 
-# === THREAD DE LANCEMENT DU BOT ===
-import threading
-def start_bot():
-    async def inner():
-        await bot_app.initialize()
-        await bot_app.start()
-        bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
-        print("✅ Bot prêt à recevoir des images")
-    asyncio.run(inner())
+# === FASTAPI STARTUP ===
+@app_fastapi.on_event("startup")
+async def startup():
+    global bot_app
+    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
+    bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.bot.set_webhook("https://bot-suivi-telegram.onrender.com/webhook")
+    bot_app.job_queue.run_repeating(handle_pending, interval=REPLY_DELAY * 60)
+    print("✅ Bot Telegram démarré via FastAPI")
 
-threading.Thread(target=start_bot).start()
+# === FASTAPI SHUTDOWN ===
+@app_fastapi.on_event("shutdown")
+async def shutdown():
+    if bot_app:
+        await bot_app.stop()
+        await bot_app.shutdown()
 
-# === FASTAPI POUR WEBHOOK ===
+# === ROUTE WEBHOOK ===
 @app_fastapi.post("/webhook")
 async def telegram_webhook(req: Request):
     try:
