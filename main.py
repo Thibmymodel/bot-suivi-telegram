@@ -18,20 +18,33 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 🔍 Détection dynamique de Tesseract
-found_path = shutil.which("tesseract")
-if not found_path:
-    default_path = "/usr/bin/tesseract"
-    if os.path.exists(default_path):
-        found_path = default_path
+def detect_tesseract_path():
+    path = shutil.which("tesseract")
+    if path:
+        logger.info(f"✅ Tesseract trouvé automatiquement à : {path}")
+        return path
+    elif os.path.exists("/usr/bin/tesseract"):
         logger.warning("❌ Tesseract non trouvé automatiquement. Utilisation du chemin par défaut : /usr/bin/tesseract")
+        return "/usr/bin/tesseract"
     else:
         logger.critical("❌❌ Tesseract introuvable même au chemin par défaut. OCR indisponible.")
-else:
-    logger.info(f"✅ Tesseract trouvé automatiquement à : {found_path}")
+        return None
 
-# Affectation explicite pour pytesseract
-pytesseract.pytesseract.tesseract_cmd = found_path
+tesseract_path = detect_tesseract_path()
+pytesseract.pytesseract.tesseract_cmd = tesseract_path
 logger.info(f"📌 pytesseract utilisera : {pytesseract.pytesseract.tesseract_cmd}")
+
+# Test exécution directe
+if tesseract_path:
+    try:
+        import subprocess
+        result = subprocess.run([tesseract_path, "--version"], capture_output=True, text=True)
+        if result.returncode == 0:
+            logger.info("🧪 Tesseract fonctionne correctement.")
+        else:
+            logger.error("❌ Erreur lors du test de Tesseract.")
+    except Exception as e:
+        logger.error("❌ Exception lors de l'exécution de Tesseract", exc_info=True)
 
 # Configuration du bot Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
