@@ -1,6 +1,16 @@
 services:
   - type: web
     name: bot-suivi-telegram
-    env: docker
-    plan: free
-    autoDeploy: true
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        fromDatabase: false
+        value: "${TELEGRAM_BOT_TOKEN}"
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        fromDatabase: false
+        value: "${GOOGLE_APPLICATION_CREDENTIALS_JSON}"
+      - key: RENDER_EXTERNAL_URL
+        fromDatabase: false
+        value: "https://bot-suivi-telegram.onrender.com"

@@ -1,29 +1,24 @@
-# Étape 1 : Image de base optimisée
 FROM python:3.11-slim
 
-# Étape 2 : Installation de Tesseract et dépendances
+# Installer Tesseract + dépendances
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        libglib2.0-0 \
-        libsm6 \
-        libxext6 \
-        libxrender-dev && \
+    apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev poppler-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Étape 3 : Définir le répertoire de travail
-WORKDIR /opt/render/project/src
+# Forcer l’ajout au PATH
+ENV TESSERACT_PATH="/usr/bin/tesseract"
+ENV PATH="$PATH:/usr/bin"
 
-# Étape 4 : Copier les fichiers du projet
-COPY . .
+# Installer les dépendances Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Étape 5 : Installer les dépendances Python
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Copier le code
+COPY . /app
+WORKDIR /app
 
-# Étape 6 : Vérification manuelle du path de Tesseract
-RUN which tesseract || (echo "❌ Tesseract non trouvé dans le PATH !" && exit 1)
-
-# Étape 7 : Définir la commande de démarrage
+# Exécuter le bot
 CMD ["python", "main.py"]
+
+ENV PATH="/usr/bin:$PATH"
