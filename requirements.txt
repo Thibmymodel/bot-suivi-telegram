@@ -2,9 +2,10 @@ python-telegram-bot==20.8
 fastapi
 uvicorn
 pytesseract
+pillow
+httpx
 gspread
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 oauth2client
-Pillow

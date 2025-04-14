@@ -17,17 +17,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Détection dynamique de Tesseract
-TESSERACT_PATHS = [
-    "/usr/bin/tesseract",
-    "/usr/local/bin/tesseract",
-    shutil.which("tesseract")
-]
+found_path = shutil.which("tesseract")
+logger.info(f"Tesseract path check: {found_path}")  # LOG explicite du chemin
 
-TESSERACT_PATH = next((path for path in TESSERACT_PATHS if path and os.path.exists(path)), None)
-
-if TESSERACT_PATH:
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-    logger.info(f"✅ Tesseract trouvé à {TESSERACT_PATH}")
+if found_path:
+    pytesseract.pytesseract.tesseract_cmd = found_path
+    logger.info(f"✅ Tesseract trouvé à {found_path}")
 else:
     logger.warning("❌ Tesseract introuvable. L'OCR échouera.")
 
@@ -84,14 +79,11 @@ async def webhook_handler(request: Request):
 
 @app_fastapi.on_event("startup")
 async def on_startup():
-    try:
-        async with httpx.AsyncClient() as client:
-            url = f"{BASE_URL}/setWebhook"
-            webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://bot-suivi-telegram.onrender.com") + "/webhook"
-            await client.post(url, json={"url": webhook_url})
-        logger.info("✅ Bot Telegram lancé avec succès via webhook.")
-    except Exception as e:
-        logger.error("❌ Erreur lors du démarrage du webhook Telegram", exc_info=True)
+    async with httpx.AsyncClient() as client:
+        url = f"{BASE_URL}/setWebhook"
+        webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://bot-suivi-telegram.onrender.com") + "/webhook"
+        await client.post(url, json={"url": webhook_url})
+    logger.info("✅ Bot Telegram lancé avec succès via webhook.")
 
 @app_fastapi.on_event("shutdown")
 async def on_shutdown():
