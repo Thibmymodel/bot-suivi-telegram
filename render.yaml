@@ -1,16 +1,13 @@
 services:
   - type: web
     name: bot-suivi-telegram
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
+    env: docker
+    dockerfilePath: ./Dockerfile
+    startCommand: uvicorn main:app_fastapi --host 0.0.0.0 --port 10000
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         fromDatabase: false
-        value: "${TELEGRAM_BOT_TOKEN}"
+        value: ${TELEGRAM_BOT_TOKEN}
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         fromDatabase: false
-        value: "${GOOGLE_APPLICATION_CREDENTIALS_JSON}"
-      - key: RENDER_EXTERNAL_URL
-        fromDatabase: false
-        value: "https://bot-suivi-telegram.onrender.com"
+        value: ${GOOGLE_APPLICATION_CREDENTIALS_JSON}

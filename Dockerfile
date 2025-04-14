@@ -1,24 +1,30 @@
 FROM python:3.11-slim
 
-# Installer Tesseract + dépendances
-RUN apt-get update && \
-    apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev poppler-utils && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Préinstallation des dépendances système nécessaires
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libtesseract-dev \
+    libleptonica-dev \
+    poppler-utils \
+    libgl1-mesa-glx \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Forcer l’ajout au PATH
-ENV TESSERACT_PATH="/usr/bin/tesseract"
-ENV PATH="$PATH:/usr/bin"
-
-# Installer les dépendances Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copier le code
-COPY . /app
+# Définir le répertoire de travail
 WORKDIR /app
 
-# Exécuter le bot
-CMD ["python", "main.py"]
+# Copier les fichiers de l'application
+COPY . .
 
-ENV PATH="/usr/bin:$PATH"
+# Installer les dépendances Python
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Confirmer la présence de Tesseract
+RUN which tesseract || echo "Tesseract non trouvé dans le PATH"
+
+# Exposer le port attendu
+EXPOSE 10000
+
+# Lancer le bot via FastAPI
+CMD ["uvicorn", "main:app_fastapi", "--host", "0.0.0.0", "--port", "10000"]
