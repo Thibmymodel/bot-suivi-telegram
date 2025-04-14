@@ -15,22 +15,23 @@ from google.oauth2.service_account import Credentials
 
 # === CONFIGURATION ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROUP_ID = -1002317321058
-REPLY_DELAY = 3  # en minutes
+GROUP_ID = int(os.environ.get("TELEGRAM_GROUP_ID", "-1"))
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+CREDENTIALS_JSON = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+REPLY_DELAY = 3  # minutes
 
 # === GOOGLE SHEET ===
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-credentials = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
+credentials = Credentials.from_service_account_info(json.loads(CREDENTIALS_JSON), scopes=SCOPES)
 gc = gspread.authorize(credentials)
-sheet = gc.open_by_key("1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE")
-worksheet = sheet.worksheet("Données Journalières")
+worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 
-# === VARIABLES GLOBALES ===
+# === APPLICATIONS ===
 app_fastapi = FastAPI()
 pending_images = {}
+bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# === OCR ===
+# === OCR UTILS ===
 def try_ocr_variants(image_path):
     try:
         img = Image.open(image_path)
@@ -56,14 +57,12 @@ def extract_info_from_image(image_path):
 
     lines = text.split("\n")
     text_lower = text.lower()
-    if "threads" in text_lower:
-        network = "Threads"
-    elif "tiktok" in text_lower or "j'aime" in text_lower:
-        network = "TikTok"
-    elif "twitter" in text_lower:
-        network = "Twitter"
-    else:
-        network = "Instagram"
+    network = (
+        "Threads" if "threads" in text_lower else
+        "TikTok" if "tiktok" in text_lower or "j'aime" in text_lower else
+        "Twitter" if "twitter" in text_lower else
+        "Instagram"
+    )
 
     account, followers = "inconnu", -1
     for line in lines:
@@ -89,13 +88,11 @@ def get_previous_count(account_name):
         for row in reversed(records):
             if row['Compte'] == account_name and row['Abonnés'] > 0:
                 return row['Abonnés']
-    except:
-        pass
+    except Exception as e:
+        print("Erreur lecture précédente :", e)
     return 0
 
-# === BOT TELEGRAM ===
-bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
-
+# === HANDLER IMAGE ===
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat_id != GROUP_ID:
         return
@@ -112,6 +109,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
+# === PENDING TASKS ===
 async def handle_pending(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for user_id in list(pending_images.keys()):

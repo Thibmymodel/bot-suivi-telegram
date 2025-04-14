@@ -1,8 +1,6 @@
 services:
   - type: web
     name: bot-suivi-telegram
-    env: python
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
     autoDeploy: true
