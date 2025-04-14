@@ -1,23 +1,24 @@
-# Utilise une image Debian avec Python
 FROM python:3.11-slim
 
-# Évite les prompts interactifs pendant l'installation
-ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /opt/render/project/src
 
-# Installe Tesseract et dépendances essentielles
+# Installation de Tesseract et dépendances utiles à l'OCR
 RUN apt-get update && \
-    apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
+    apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        libtesseract-dev \
+        libleptonica-dev \
+        pkg-config \
+        poppler-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Crée le dossier de l'application
-WORKDIR /opt/app
+# Ajout explicite de /usr/local/bin au PATH (par précaution pour Tesseract)
+ENV PATH="/usr/local/bin:${PATH}"
 
-# Copie les fichiers
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
-# Installe les dépendances Python
-RUN pip install --upgrade pip && pip install -r requirements.txt
-
-# Définit la commande de lancement
 CMD ["python", "main.py"]
