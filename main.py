@@ -8,6 +8,10 @@ import datetime
 import httpx
 from PIL import Image
 from fastapi import FastAPI, Request
+from fastapi import Response
+from fastapi.responses import JSONResponse
+from fastapi import status
+from fastapi.lifespan import Lifespan
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.ext import Defaults, CallbackContext
@@ -33,8 +37,24 @@ if not TELEGRAM_TOKEN:
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 # Création de l'application FastAPI et Telegram
-app_fastapi = FastAPI()
 application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# Initialisation FastAPI avec lifespan handler (nouveau système)
+async def lifespan(app: FastAPI):
+    try:
+        async with httpx.AsyncClient() as client:
+            url = f"{BASE_URL}/setWebhook"
+            webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://bot-suivi-telegram.onrender.com") + "/webhook"
+            response = await client.post(url, json={"url": webhook_url})
+            if response.status_code == 200:
+                logger.info("✅ Webhook Telegram configuré.")
+            else:
+                logger.warning(f"⚠️ Webhook non configuré. Code HTTP: {response.status_code}")
+        yield
+    finally:
+        logger.info("🛑 Arrêt du bot Telegram.")
+
+app_fastapi = FastAPI(lifespan=lifespan)
 
 # ----------- Fonctions principales -----------
 
@@ -72,23 +92,13 @@ async def webhook_handler(request: Request):
         data = await request.json()
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
-        return {"status": "ok"}
+        return JSONResponse(content={"status": "ok"}, status_code=status.HTTP_200_OK)
     except Exception as e:
         logger.error("Erreur webhook", exc_info=True)
-        return {"status": "error", "detail": str(e)}
-
-@app_fastapi.on_event("startup")
-async def on_startup():
-    async with httpx.AsyncClient() as client:
-        url = f"{BASE_URL}/setWebhook"
-        webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://bot-suivi-telegram.onrender.com") + "/webhook"
-        await client.post(url, json={"url": webhook_url})
-    logger.info("✅ Bot Telegram lancé avec succès via webhook.")
-
-@app_fastapi.on_event("shutdown")
-async def on_shutdown():
-    logger.info("Bot arrêté proprement.")
+        return JSONResponse(content={"status": "error", "detail": str(e)}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ----------- Handlers Telegram -----------
 
 application.add_handler(MessageHandler(filters.PHOTO, handle_image))
+
+logger.info("✅ Serveur FastAPI prêt.")
