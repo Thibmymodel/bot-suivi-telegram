@@ -1,24 +1,17 @@
-FROM python:3.11
+FROM python:3.11-slim
 
-# Installer tesseract et ses dépendances système
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Installer tesseract + dépendances
+RUN apt-get update && \
+    apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Répertoire de travail
+# Créer dossier app et copier le code
 WORKDIR /opt/render/project/src
-
-# Installation des dépendances Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copier le code
 COPY . .
 
-# Commande de lancement
-CMD ["uvicorn", "main:app_fastapi", "--host", "0.0.0.0", "--port", "10000"]
+# Installer les dépendances Python
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+
+# Commande pour lancer le bot
+CMD ["python", "main.py"]
