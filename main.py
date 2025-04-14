@@ -17,15 +17,17 @@ from telegram.ext import Defaults, CallbackContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Détection dynamique de Tesseract
+# Détection dynamique de Tesseract avec fallback manuel
 found_path = shutil.which("tesseract")
-logger.info(f"Tesseract path check: {found_path}")  # LOG explicite du chemin
-
-if found_path:
-    pytesseract.pytesseract.tesseract_cmd = found_path
-    logger.info(f"✅ Tesseract trouvé à {found_path}")
+if not found_path:
+    found_path = "/usr/bin/tesseract"
+    logger.warning("❌ Tesseract non trouvé automatiquement, tentative d'utilisation du chemin par défaut.")
 else:
-    logger.warning("❌ Tesseract introuvable. L'OCR échouera.")
+    logger.info(f"✅ Tesseract trouvé automatiquement à {found_path}")
+
+# Affectation explicite pour pytesseract
+pytesseract.pytesseract.tesseract_cmd = found_path
+logger.info(f"📌 pytesseract utilisera : {pytesseract.pytesseract.tesseract_cmd}")
 
 # Configuration du bot Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -36,7 +38,7 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # Création de l'application FastAPI et Telegram
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Initialisation FastAPI sans Lifespan (retour version stable)
+# Initialisation FastAPI
 app_fastapi = FastAPI()
 
 @app_fastapi.on_event("startup")
