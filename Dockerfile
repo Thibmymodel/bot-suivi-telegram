@@ -1,20 +1,25 @@
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
-# Dépendances système pour Tesseract + librairies utiles
-RUN apt-get update && \
-    apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxext6 libxrender-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Install system dependencies including tesseract
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Création d'un répertoire de travail
-WORKDIR /app
+# Set workdir
+WORKDIR /opt/render/project/src
 
-# Copie des fichiers
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy full app code
 COPY . .
 
-# Installation des dépendances Python
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
-
-# Lancement de FastAPI avec uvicorn
+# Launch with uvicorn (FastAPI)
 CMD ["uvicorn", "main:app_fastapi", "--host", "0.0.0.0", "--port", "10000"]
