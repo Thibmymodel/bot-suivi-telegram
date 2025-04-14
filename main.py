@@ -17,13 +17,17 @@ from telegram.ext import Defaults, CallbackContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Détection dynamique de Tesseract avec fallback manuel
+# 🔍 Détection dynamique de Tesseract
 found_path = shutil.which("tesseract")
 if not found_path:
-    found_path = "/usr/bin/tesseract"
-    logger.warning("❌ Tesseract non trouvé automatiquement, tentative d'utilisation du chemin par défaut.")
+    default_path = "/usr/bin/tesseract"
+    if os.path.exists(default_path):
+        found_path = default_path
+        logger.warning("❌ Tesseract non trouvé automatiquement. Utilisation du chemin par défaut : /usr/bin/tesseract")
+    else:
+        logger.critical("❌❌ Tesseract introuvable même au chemin par défaut. OCR indisponible.")
 else:
-    logger.info(f"✅ Tesseract trouvé automatiquement à {found_path}")
+    logger.info(f"✅ Tesseract trouvé automatiquement à : {found_path}")
 
 # Affectation explicite pour pytesseract
 pytesseract.pytesseract.tesseract_cmd = found_path
@@ -66,7 +70,7 @@ def extract_text_from_image(image_bytes: bytes) -> str:
         image = Image.open(io.BytesIO(image_bytes))
         return pytesseract.image_to_string(image)
     except Exception as e:
-        logger.error("Erreur lors de l'extraction de texte OCR", exc_info=True)
+        logger.error("❌ Erreur lors de l'extraction OCR", exc_info=True)
         return ""
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,12 +86,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"🧾 Texte extrait :\n{text[:1000]}")
         else:
             await update.message.reply_text("❌ Aucun texte détecté dans l'image.")
-
     except Exception as e:
-        logger.error("Erreur lors de l'OCR", exc_info=True)
-        await update.message.reply_text("❌ Erreur lors de l'analyse de l'image.")
+        logger.error("Erreur lors du traitement de l'image", exc_info=True)
+        await update.message.reply_text("❌ Une erreur est survenue lors de l'analyse de l'image.")
 
-# ----------- FastAPI Webhook -----------
+# ----------- Webhook FastAPI -----------
 
 @app_fastapi.post("/webhook")
 async def webhook_handler(request: Request):
