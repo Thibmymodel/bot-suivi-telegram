@@ -2,12 +2,12 @@ services:
   - type: web
     name: bot-suivi-telegram
     env: docker
-    dockerfilePath: ./Dockerfile
-    startCommand: uvicorn main:app_fastapi --host 0.0.0.0 --port 10000
+    repo: https://github.com/Thibmymodel/bot-suivi-telegram
+    branch: main
+    dockerfilePath: Dockerfile
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        fromDatabase: false
-        value: ${TELEGRAM_BOT_TOKEN}
+        sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
-        fromDatabase: false
-        value: ${GOOGLE_APPLICATION_CREDENTIALS_JSON}
+        sync: false
+    autoDeploy: true
