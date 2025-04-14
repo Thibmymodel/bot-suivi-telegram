@@ -18,6 +18,9 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GOOGLE_CREDENTIALS = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
 
+# 🔧 Spécifier le chemin de Tesseract manuellement
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
 # 🌐 Instances globales
 app_fastapi = FastAPI()
 bot_app = None
@@ -40,9 +43,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await photo.get_file()
     image_bytes = await photo_file.download_as_bytearray()
 
-    text = extract_text_from_image(image_bytes)
-
-    await update.message.reply_text(f"🧾 OCR détecté :\n{text}")
+    try:
+        text = extract_text_from_image(image_bytes)
+        await update.message.reply_text(f"🧾 OCR détecté :\n{text}")
+    except Exception as e:
+        logging.exception("Erreur lors de l'OCR")
+        await update.message.reply_text("❌ Erreur lors de l'analyse de l'image.")
 
 
 # 🔁 Webhook Telegram
@@ -91,4 +97,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app_fastapi", host="0.0.0.0", port=port)
-
