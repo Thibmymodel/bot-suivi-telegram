@@ -1,31 +1,23 @@
+# Utilise une image Debian avec Python
 FROM python:3.11-slim
 
-# Empêche les invites interactives
+# Évite les prompts interactifs pendant l'installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Installation des dépendances système nécessaires
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    libtesseract-dev \
-    libleptonica-dev \
-    gcc \
-    build-essential \
-    poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+# Installe Tesseract et dépendances essentielles
+RUN apt-get update && \
+    apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Création du dossier de travail
-WORKDIR /opt/render/project/src
+# Crée le dossier de l'application
+WORKDIR /opt/app
 
-# Copie des fichiers
+# Copie les fichiers
 COPY . .
 
-# Installation des dépendances Python
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# Installe les dépendances Python
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Exposition du port utilisé par FastAPI
-ENV PORT 10000
-EXPOSE 10000
-
-# Commande de lancement
+# Définit la commande de lancement
 CMD ["python", "main.py"]
