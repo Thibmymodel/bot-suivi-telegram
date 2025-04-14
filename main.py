@@ -1,99 +1,81 @@
 import os
 import io
-import json
+import re
 import pytesseract
-import datetime
+import shutil
 import logging
-from fastapi import FastAPI, Request
+import datetime
+import httpx
 from PIL import Image
-from google.oauth2 import service_account
-import gspread
-from telegram import Update, Bot
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from fastapi import FastAPI, Request
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Defaults, CallbackContext
 
-# 📌 Configuration du logging
+# Configuration du logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# 🔐 Variables d'environnement (Render)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GOOGLE_CREDENTIALS = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+# Détection automatique du chemin de tesseract
+TESSERACT_PATH = shutil.which("tesseract")
+if not TESSERACT_PATH:
+    raise RuntimeError("❌ Tesseract n'est pas trouvé dans le PATH.")
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
-# 🔧 Spécifier le chemin de Tesseract manuellement
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+# Configuration du bot Telegram
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-# 🌐 Instances globales
+# Création de l'application FastAPI et Telegram
 app_fastapi = FastAPI()
-bot_app = None
-bot_instance = None
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+# ----------- Fonctions principales -----------
 
-# 📤 OCR simple
 def extract_text_from_image(image_bytes: bytes) -> str:
     image = Image.open(io.BytesIO(image_bytes))
-    text = pytesseract.image_to_string(image)
-    return text
+    return pytesseract.image_to_string(image)
 
-
-# 📥 Gestion des images Telegram
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        return
-
-    photo = update.message.photo[-1]  # Meilleure qualité
-    photo_file = await photo.get_file()
-    image_bytes = await photo_file.download_as_bytearray()
-
     try:
+        if not update.message.photo:
+            return
+
+        file = await context.bot.get_file(update.message.photo[-1].file_id)
+        image_bytes = await file.download_as_bytearray()
+
         text = extract_text_from_image(image_bytes)
-        await update.message.reply_text(f"🧾 OCR détecté :\n{text}")
+        await update.message.reply_text(f"🧾 Texte extrait :\n{text[:1000]}")
+
     except Exception as e:
-        logging.exception("Erreur lors de l'OCR")
+        logger.error("Erreur lors de l'OCR", exc_info=True)
         await update.message.reply_text("❌ Erreur lors de l'analyse de l'image.")
 
+# ----------- FastAPI Webhook -----------
 
-# 🔁 Webhook Telegram
 @app_fastapi.post("/webhook")
-async def telegram_webhook(request: Request):
-    json_data = await request.json()
-    update = Update.de_json(json_data, bot_instance)
-    await bot_app.process_update(update)
-    return {"ok": True}
+async def webhook_handler(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error("Erreur webhook", exc_info=True)
+        return {"status": "error", "detail": str(e)}
 
-
-# 🚀 Démarrage FastAPI
 @app_fastapi.on_event("startup")
-async def startup_event():
-    global bot_app, bot_instance
+async def on_startup():
+    async with httpx.AsyncClient() as client:
+        url = f"{BASE_URL}/setWebhook"
+        webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://bot-suivi-telegram.onrender.com") + "/webhook"
+        await client.post(url, json={"url": webhook_url})
+    logger.info("✅ Bot Telegram lancé avec succès via webhook.")
 
-    # 🔐 Connexion Google Sheets
-    creds = service_account.Credentials.from_service_account_info(GOOGLE_CREDENTIALS)
-    gspread_client = gspread.authorize(creds)
-
-    # 🤖 Bot Telegram
-    bot_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    bot_instance = bot_app.bot
-
-    # 📷 Handler pour images
-    bot_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-
-    # 🌍 Définir le Webhook
-    webhook_url = "https://bot-suivi-telegram.onrender.com/webhook"
-    await bot_instance.set_webhook(webhook_url)
-
-    # ✅ Lancer l'application bot
-    await bot_app.initialize()
-    logging.info("✅ Bot Telegram lancé avec succès via webhook.")
-
-
-# 🧹 Arrêt FastAPI
 @app_fastapi.on_event("shutdown")
-async def shutdown_event():
-    await bot_app.shutdown()
-    logging.info("🛑 Bot arrêté proprement.")
+async def on_shutdown():
+    logger.info("Bot arrêté proprement.")
 
-if __name__ == "__main__":
-    import uvicorn
-    import os
+# ----------- Handlers Telegram -----------
 
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app_fastapi", host="0.0.0.0", port=port)
+application.add_handler(MessageHandler(filters.PHOTO, handle_image))
