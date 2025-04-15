@@ -73,7 +73,7 @@ try:
     sheet_client = gspread.authorize(creds)
     SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
     sheet = sheet_client.open_by_key(SPREADSHEET_ID)
-    worksheet = sheet.worksheet("Suivi")
+    worksheet = sheet.worksheet("Données Journalières")
 except Exception as e:
     worksheet = None
     logging.warning(f"❌ Erreur connexion Google Sheets : {e}")
@@ -115,8 +115,40 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🧠 OCR détecté :\n{text.strip()[:100]}...")
 
         if worksheet:
-            now = datetime.now().strftime("%d/%m/%Y %H:%M")
-            worksheet.append_row([now, update.effective_user.username, text.strip()[:500]])
+            now = datetime.now().strftime("%Y-%m-%d 00:00:00")
+            assistant = f"@{update.effective_user.username}"
+            reseau, compte = "Non détecté", "Non détecté"
+
+            if "instagram" in text.lower():
+                reseau = "Instagram"
+            elif "twitter" in text.lower():
+                reseau = "Twitter"
+            elif "tiktok" in text.lower():
+                reseau = "TikTok"
+            elif "threads" in text.lower():
+                reseau = "Threads"
+
+            for line in text.splitlines():
+                if line.strip().startswith("@"):  # identifiant du compte
+                    compte = line.strip().split()[0]
+                    break
+
+            for word in text.split():
+                if word.isdigit() and 100 < int(word) < 10_000_000:
+                    abonnés = int(word)
+                    break
+            else:
+                abonnés = "?"
+
+            # Recherche de l’évolution en ligne OCR
+            evolution = "?"
+            mots = text.replace("+", " ").replace("-", " ").split()
+            for i in range(len(mots) - 1):
+                if mots[i].lower() in ["j-1", "j-1:", "j-1." ] and mots[i+1].isdigit():
+                    evolution = int(mots[i+1])
+                    break
+
+            worksheet.append_row([now, assistant, reseau, compte, abonnés, evolution])
             await update.message.reply_text("✅ Données ajoutées à Google Sheets")
         else:
             await update.message.reply_text("⚠️ Feuille Google Sheets non connectée")
