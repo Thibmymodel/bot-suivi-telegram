@@ -14,6 +14,8 @@ from telegram.ext import (
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
+import time
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -64,11 +66,11 @@ else:
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 if creds_json:
-    import json
     creds_dict = json.loads(creds_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     sheet_client = gspread.authorize(creds)
-    sheet = sheet_client.open_by_url("https://docs.google.com/spreadsheets/d/1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE/edit")
+    SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+    sheet = sheet_client.open_by_key(SPREADSHEET_ID)
     worksheet = sheet.worksheet("Suivi")
 else:
     worksheet = None
@@ -79,6 +81,14 @@ app = FastAPI()
 
 # Telegram
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    logging.error("❌ TELEGRAM_BOT_TOKEN non trouvé dans les variables d'environnement !")
+else:
+    logging.info(f"✅ TELEGRAM_BOT_TOKEN détecté (longueur: {len(BOT_TOKEN)})")
+
+# Pause courte pour Railway (propagation des env vars)
+time.sleep(1)
+
 WEBHOOK_URL = os.environ.get("RAILWAY_PUBLIC_URL")
 PORT = int(os.environ.get("PORT", 8000))
 application = Application.builder().token(BOT_TOKEN).build()
