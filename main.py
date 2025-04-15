@@ -31,6 +31,16 @@ def log_system_environment():
 
 log_system_environment()
 
+# 🔍 Diagnostic direct de Tesseract pour logs Render
+try:
+    result = subprocess.run(["tesseract", "--version"], capture_output=True, text=True)
+    if result.returncode == 0:
+        logger.info(f"🧪 Tesseract détecté dans main.py : {result.stdout.splitlines()[0]}")
+    else:
+        logger.error(f"❌ Tesseract erreur dans main.py : {result.stderr}")
+except Exception as e:
+    logger.exception("❌ Exception Tesseract dans main.py")
+
 # 🔍 Détection robuste de Tesseract
 def detect_tesseract_path():
     candidates = [
@@ -89,7 +99,7 @@ async def on_startup():
 
 @app_fastapi.on_event("shutdown")
 async def on_shutdown():
-    logger.info("🛑 Arrêt du bot Telegram.")
+    logger.info("🚩 Arrêt du bot Telegram.")
 
 # ----------- Fonctions principales -----------
 
@@ -111,7 +121,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = extract_text_from_image(image_bytes)
 
         if text.strip():
-            await update.message.reply_text(f"🧾 Texte extrait :\n{text[:1000]}")
+            await update.message.reply_text(f"📟 Texte extrait :\n{text[:1000]}")
         else:
             await update.message.reply_text("❌ Aucun texte détecté dans l'image.")
     except Exception as e:

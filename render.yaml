@@ -3,8 +3,7 @@ services:
     name: bot-suivi-telegram
     env: docker
     plan: free
-    repo: https://github.com/Thibmymodel/bot-suivi-telegram
     branch: main
-    rootDir: .
-    dockerfilePath: ./Dockerfile
+    repo: https://github.com/TONUTILISATEUR/bot-suivi-telegram
+    dockerfilePath: Dockerfile
     autoDeploy: true
