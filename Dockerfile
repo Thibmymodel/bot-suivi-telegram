@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# 🧰 Installation de Tesseract OCR et ses dépendances
+# 🔧 Installation Tesseract + dépendances nécessaires à Pillow / Tesseract
 RUN apt-get update && \
     apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -8,16 +8,16 @@ RUN apt-get update && \
 # 📁 Dossier de travail
 WORKDIR /app
 
-# 📦 Copie du projet dans le conteneur
+# 🧠 Copie du code
 COPY . .
 
-# 🐍 Installation des dépendances Python
+# 📦 Install dépendances Python
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 🌐 Port pour FastAPI
+# 🌍 Port pour FastAPI
 ENV PORT=8000
 EXPOSE 8000
 
-# 🧪 ➕ Test Tesseract directement dans les logs Render
-CMD tesseract --version && python main.py
+# 🧪 TEST affichage emplacement + version de Tesseract dans les logs Render
+CMD which tesseract && tesseract --version && python main.py
