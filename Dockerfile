@@ -1,26 +1,20 @@
-FROM python:3.11-slim
+# Dockerfile complet avec installation de Tesseract OCR
 
-# Dépendances système
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    libtesseract-dev \
-    libleptonica-dev \
-    tesseract-ocr-fra \
-    poppler-utils \
-    curl \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+FROM python:3.11
 
-# Logs de vérification de Tesseract
-RUN echo "🧪 Test binaire Tesseract" && \
-    which tesseract && \
-    tesseract --version
+# 📦 Installation de Tesseract OCR et dépendances système
+RUN apt-get update && \
+    apt-get install -y tesseract-ocr && \
+    rm -rf /var/lib/apt/lists/*
 
-# Dépendances Python
+# 📁 Création du répertoire de travail
+WORKDIR /app
+
+# 🔄 Copie des fichiers nécessaires
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copie du code
 COPY . .
 
-# Lance le bot
+# 🚀 Lancement du bot
 CMD ["python", "main.py"]
