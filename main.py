@@ -2,6 +2,7 @@ import os
 import logging
 import shutil
 import pytesseract
+import subprocess
 from fastapi import FastAPI
 from telegram.ext import Application, CommandHandler
 
@@ -14,6 +15,15 @@ POTENTIAL_PATHS = [
     "/usr/local/bin/tesseract",
     "/app/.apt/usr/bin/tesseract"
 ]
+
+# Log PATH et contenu du répertoire /usr/bin pour debug Render
+try:
+    logging.info(f"🔍 PATH actuel : {os.environ.get('PATH')}")
+    logging.info("📁 Contenu de /usr/bin :")
+    result = subprocess.run(["ls", "-la", "/usr/bin"], capture_output=True, text=True)
+    logging.info(result.stdout)
+except Exception as e:
+    logging.warning(f"Erreur lors de l'inspection du système : {e}")
 
 TESSERACT_PATH = shutil.which("tesseract") or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
 
