@@ -62,12 +62,12 @@ if TESSERACT_PATH:
 else:
     logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
-# 🔐 Connexion Google Sheets avec JSON inline dans GOOGLE_APPLICATION_CREDENTIALS
+# 🔐 Connexion Google Sheets avec JSON inline dans GOOGLE_APPLICATION_CREDENTIALS_JSON
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 try:
-    raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if not raw_json or not raw_json.strip().startswith("{"):
-        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide, non définie ou contient un format invalide")
+        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS_JSON est vide, non définie ou contient un format invalide")
     json_key = json.loads(raw_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
     sheet_client = gspread.authorize(creds)
@@ -149,7 +149,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
 
             worksheet.append_row([now, assistant, reseau, compte, abonnés, evolution])
-            await update.message.reply_text("✅ Données ajoutées à Google Sheets")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Données ajoutées à Google Sheets")
         else:
             await update.message.reply_text("⚠️ Feuille Google Sheets non connectée")
     except Exception as e:
