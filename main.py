@@ -62,7 +62,7 @@ if TESSERACT_PATH:
 else:
     logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
-# 🔐 Google Sheets via GOOGLE_APPLICATION_CREDENTIALS (clé JSON inline depuis Railway)
+# 🔐 Connexion Google Sheets avec JSON inline dans GOOGLE_APPLICATION_CREDENTIALS
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 try:
     raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
