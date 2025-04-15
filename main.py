@@ -5,32 +5,33 @@ import pytesseract
 import subprocess
 from PIL import Image
 import io
+from datetime import datetime
 from fastapi import FastAPI
-from telegram.ext import Application, CommandHandler
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes,
+    filters
+)
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-# Configuration du logging
+# Logging
 logging.basicConfig(level=logging.INFO)
 
-# Ajoute les chemins manuellement au PATH pour garantir que Tesseract est détectable
-os.environ["PATH"] = "/usr/bin:/usr/local/bin:" + os.environ.get("PATH", "")
+# Configuration des chemins Tesseract
+os.environ["PATH"] = "/usr/bin:/usr/local/bin:/app/.apt/usr/bin:" + os.environ.get("PATH", "")
+POTENTIAL_PATHS = ["/usr/bin/tesseract", "/usr/local/bin/tesseract", "/app/.apt/usr/bin/tesseract"]
 
-# Vérifie et configure Tesseract avec plusieurs chemins possibles
-POTENTIAL_PATHS = [
-    "/usr/bin/tesseract",
-    "/usr/local/bin/tesseract",
-    "/app/.apt/usr/bin/tesseract"
-]
-
-# Log PATH et contenu des répertoires pour debug Render
+# Vérification du binaire Tesseract
 try:
     logging.info(f"🔍 PATH actuel : {os.environ.get('PATH')}")
-    logging.info("📁 Contenu de /usr/bin :")
-    result = subprocess.run(["ls", "-la", "/usr/bin"], capture_output=True, text=True)
-    logging.info(result.stdout)
+    for path in ["/usr/bin", "/usr/local/bin", "/app/.apt/usr/bin"]:
+        if os.path.exists(path):
+            result = subprocess.run(["ls", "-la", path], capture_output=True, text=True)
+            logging.info(f"📁 Contenu de {path} :\n{result.stdout}")
 except Exception as e:
     logging.warning(f"Erreur lors de l'inspection du système : {e}")
 
-# Test direct : tesseract -v
 try:
     version_check = subprocess.run(["tesseract", "-v"], capture_output=True, text=True)
     logging.info("📦 tesseract -v :")
@@ -38,62 +39,84 @@ try:
 except Exception as e:
     logging.warning(f"❌ Erreur lors de l'exécution de tesseract -v : {e}")
 
-# Forçage explicite du chemin Tesseract
-FORCED_TESSERACT_PATH = "/usr/bin/tesseract"
-if os.path.exists(FORCED_TESSERACT_PATH):
-    pytesseract.pytesseract.tesseract_cmd = FORCED_TESSERACT_PATH
-    logging.info(f"⚙️ Tesseract forcé à : {FORCED_TESSERACT_PATH}")
-else:
-    logging.warning(f"❌ Chemin forcé non trouvé : {FORCED_TESSERACT_PATH}")
-
-# Recherche du binaire tesseract dans le PATH
 which_result = shutil.which("tesseract")
 logging.info(f"🔍 Résultat de shutil.which('tesseract') : {which_result}")
 
-TESSERACT_PATH = pytesseract.pytesseract.tesseract_cmd or which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
-
+TESSERACT_PATH = which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-    logging.info(f"✅ Tesseract actif à : {TESSERACT_PATH}")
-    logging.info(f"🔧 pytesseract utilisera ce chemin : {pytesseract.pytesseract.tesseract_cmd}")
+    logging.info(f"✅ pytesseract utilisera : {TESSERACT_PATH}")
     try:
         version = pytesseract.get_tesseract_version()
         logging.info(f"📦 Version Tesseract (via pytesseract) : {version}")
-
-        # Test OCR minimaliste (image blanche vide)
         test_img = Image.new("RGB", (100, 30), color=(255, 255, 255))
         buf = io.BytesIO()
         test_img.save(buf, format='PNG')
         buf.seek(0)
         pytesseract.image_to_string(Image.open(buf))
         logging.info("🔍 Test OCR exécuté avec succès ✅")
-
     except Exception as e:
         logging.warning(f"⚠️ Impossible d'obtenir la version ou d'exécuter un test OCR : {e}")
 else:
     logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
-# Initialise FastAPI
+# 🔐 Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+if creds_json:
+    import json
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    sheet_client = gspread.authorize(creds)
+    sheet = sheet_client.open_by_url("https://docs.google.com/spreadsheets/d/1__RzRpZKj0kg8Cl0QB-D91-hGKKff9SqsOQRE0GvReE/edit")
+    worksheet = sheet.worksheet("Suivi")
+else:
+    worksheet = None
+    logging.warning("❌ Credentials Google Sheets non trouvés.")
+
+# FastAPI
 app = FastAPI()
 
-# Initialise Telegram bot
+# Telegram
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
+WEBHOOK_URL = os.environ.get("RAILWAY_PUBLIC_URL")
 PORT = int(os.environ.get("PORT", 8000))
-
 application = Application.builder().token(BOT_TOKEN).build()
 
-# Commande /start
-async def start(update, context):
+# /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot opérationnel ✅")
 
 application.add_handler(CommandHandler("start", start))
 
-# Lancement FastAPI et Telegram Webhook
+# Image Handler
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
+        file_path = f"temp_{update.message.message_id}.jpg"
+        await file.download_to_drive(file_path)
+
+        text = pytesseract.image_to_string(Image.open(file_path))
+        os.remove(file_path)
+
+        await update.message.reply_text(f"🧠 OCR détecté :\n{text.strip()[:100]}...")
+
+        if worksheet:
+            now = datetime.now().strftime("%d/%m/%Y %H:%M")
+            worksheet.append_row([now, update.effective_user.username, text.strip()[:500]])
+            await update.message.reply_text("✅ Données ajoutées à Google Sheets")
+        else:
+            await update.message.reply_text("⚠️ Feuille Google Sheets non connectée")
+    except Exception as e:
+        logging.error(f"Erreur OCR : {e}")
+        await update.message.reply_text("❌ Erreur lors du traitement de l'image")
+
+application.add_handler(MessageHandler(filters.PHOTO, handle_image))
+
+# Webhook FastAPI
 if __name__ == "__main__":
     logging.info("✅ Démarrage du bot Telegram...")
-
-    # Lance le webhook (via Render)
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,

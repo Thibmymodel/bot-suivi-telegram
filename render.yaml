@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: bot-suivi-telegram
-    env: docker
-    plan: free
-    branch: main
-    repo: https://github.com/TONUTILISATEUR/bot-suivi-telegram
-    dockerfilePath: Dockerfile
-    autoDeploy: true
