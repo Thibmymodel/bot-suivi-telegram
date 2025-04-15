@@ -1,26 +1,26 @@
-# Utilise une image Python légère
 FROM python:3.11-slim
 
-# 👇 Installe Tesseract OCR et ses dépendances
+# 🧰 Installation de Tesseract OCR et ses dépendances
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        libtesseract-dev \
-        libleptonica-dev \
-        pkg-config \
-        poppler-utils \
-        curl \
-        ca-certificates && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Installe les dépendances Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copie le reste du code dans le conteneur
-COPY . /app
+# 📁 Dossier de travail
 WORKDIR /app
 
-# Lance l'application
+# 📦 Copie du projet dans le conteneur
+COPY . .
+
+# 🐍 Installation des dépendances Python
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ✅ Test manuel possible : which tesseract ou tesseract --version
+# (tu pourras faire ça dans Render → Shell)
+
+# 🌐 Port pour FastAPI
+ENV PORT=8000
+EXPOSE 8000
+
+# 🚀 Commande de lancement du bot
 CMD ["python", "main.py"]
