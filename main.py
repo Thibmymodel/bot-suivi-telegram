@@ -6,6 +6,7 @@ import shutil
 import logging
 import datetime
 import httpx
+import subprocess
 from PIL import Image
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -17,18 +18,20 @@ from telegram.ext import Defaults, CallbackContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 🔍 Détection dynamique de Tesseract
+# 🔍 Détection robuste de Tesseract
 def detect_tesseract_path():
-    path = shutil.which("tesseract")
-    if path:
-        logger.info(f"✅ Tesseract trouvé automatiquement à : {path}")
-        return path
-    elif os.path.exists("/usr/bin/tesseract"):
-        logger.warning("⚠️ Tesseract non trouvé automatiquement. Utilisation du chemin par défaut : /usr/bin/tesseract")
-        return "/usr/bin/tesseract"
-    else:
-        logger.critical("❌❌ Tesseract introuvable même au chemin par défaut. OCR indisponible.")
-        return None
+    candidates = [
+        shutil.which("tesseract"),
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract",
+        "/bin/tesseract"
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            logger.info(f"✅ Tesseract détecté à : {path}")
+            return path
+    logger.critical("❌❌ Aucun binaire Tesseract trouvé. OCR désactivé.")
+    return None
 
 tesseract_path = detect_tesseract_path()
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -37,12 +40,11 @@ logger.info(f"📌 pytesseract utilisera : {pytesseract.pytesseract.tesseract_cm
 # Test de bon fonctionnement de Tesseract
 if tesseract_path:
     try:
-        import subprocess
         result = subprocess.run([tesseract_path, "--version"], capture_output=True, text=True)
         if result.returncode == 0:
-            logger.info(f"🧪 Tesseract fonctionne correctement : {result.stdout.splitlines()[0]}")
+            logger.info(f"🧪 Tesseract fonctionne : {result.stdout.splitlines()[0]}")
         else:
-            logger.error("❌ Tesseract a retourné une erreur à l'exécution.")
+            logger.error(f"❌ Tesseract erreur d'exécution : {result.stderr}")
     except Exception as e:
         logger.exception("❌ Exception lors du test de Tesseract")
 
