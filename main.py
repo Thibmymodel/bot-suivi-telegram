@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler
 logging.basicConfig(level=logging.INFO)
 
 # Ajoute les chemins manuellement au PATH pour garantir que Tesseract est détectable
-os.environ["PATH"] += os.pathsep + "/usr/bin" + os.pathsep + "/usr/local/bin"
+os.environ["PATH"] = "/usr/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
 # Vérifie et configure Tesseract avec plusieurs chemins possibles
 POTENTIAL_PATHS = [
@@ -30,6 +30,14 @@ try:
 except Exception as e:
     logging.warning(f"Erreur lors de l'inspection du système : {e}")
 
+# Test direct : tesseract -v
+try:
+    version_check = subprocess.run(["tesseract", "-v"], capture_output=True, text=True)
+    logging.info("📦 tesseract -v :")
+    logging.info(version_check.stdout or version_check.stderr)
+except Exception as e:
+    logging.warning(f"❌ Erreur lors de l'exécution de tesseract -v : {e}")
+
 # Recherche du binaire tesseract dans le PATH
 which_result = shutil.which("tesseract")
 logging.info(f"🔍 Résultat de shutil.which('tesseract') : {which_result}")
@@ -42,7 +50,7 @@ if TESSERACT_PATH:
     logging.info(f"🔧 pytesseract utilisera ce chemin : {pytesseract.pytesseract.tesseract_cmd}")
     try:
         version = pytesseract.get_tesseract_version()
-        logging.info(f"📦 Version Tesseract : {version}")
+        logging.info(f"📦 Version Tesseract (via pytesseract) : {version}")
 
         # Test OCR minimaliste (image blanche vide)
         test_img = Image.new("RGB", (100, 30), color=(255, 255, 255))

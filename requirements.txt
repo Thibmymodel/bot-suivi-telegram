@@ -1,7 +1,6 @@
 fastapi
-uvicorn
-python-telegram-bot==20.7
-python-telegram-bot[webhooks]
+uvicorn[standard]
+python-telegram-bot[webhooks]==20.7
 httpx
 pillow
 pytesseract
