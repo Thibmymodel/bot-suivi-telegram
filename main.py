@@ -66,8 +66,8 @@ else:
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 try:
     raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not raw_json:
-        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide ou non définie")
+    if not raw_json or raw_json.strip().startswith("/"):
+        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide, non définie ou contient un chemin invalide")
     json_key = json.loads(raw_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
     sheet_client = gspread.authorize(creds)
