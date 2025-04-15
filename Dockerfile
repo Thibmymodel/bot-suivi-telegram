@@ -1,22 +1,31 @@
 FROM python:3.11-slim
 
-# Installation des dépendances système
-RUN apt-get update && apt-get install -y tesseract-ocr
-    apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev poppler-utils && \
+# Évite les questions d'apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Installation de tesseract + dépendances
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Définir le répertoire de travail
+# Définir le chemin tesseract dans le PATH au cas où
+ENV PATH="/usr/bin:${PATH}"
+
+# Copie du code
 WORKDIR /app
-
-# Copie des fichiers de l'application
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
 
-# Port par défaut pour Render
-EXPOSE 10000
+# Installation des dépendances Python
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Commande pour lancer FastAPI avec Uvicorn
-CMD ["uvicorn", "main:app_fastapi", "--host", "0.0.0.0", "--port", "10000"]
+# Port utilisé par FastAPI
+ENV PORT=8000
+
+# Lancement
+CMD ["python", "main.py"]
