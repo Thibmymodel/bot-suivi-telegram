@@ -5,11 +5,26 @@ import pytesseract
 from fastapi import FastAPI
 from telegram.ext import Application, CommandHandler
 
-# Vérifie et configure Tesseract
-TESSERACT_PATH = shutil.which("tesseract")
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+
+# Vérifie et configure Tesseract avec plusieurs chemins possibles
+POTENTIAL_PATHS = [
+    "/usr/bin/tesseract",
+    "/usr/local/bin/tesseract",
+    "/app/.apt/usr/bin/tesseract"
+]
+
+TESSERACT_PATH = shutil.which("tesseract") or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
+
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
     logging.info(f"✅ Tesseract trouvé à : {TESSERACT_PATH}")
+    try:
+        version = pytesseract.get_tesseract_version()
+        logging.info(f"📦 Version Tesseract : {version}")
+    except Exception as e:
+        logging.warning(f"⚠️ Impossible d'obtenir la version de Tesseract : {e}")
 else:
     logging.error("❌ Tesseract non détecté. OCR désactivé.")
 
@@ -31,7 +46,6 @@ application.add_handler(CommandHandler("start", start))
 
 # Lancement FastAPI et Telegram Webhook
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     logging.info("✅ Démarrage du bot Telegram...")
 
     # Lance le webhook (via Render)
