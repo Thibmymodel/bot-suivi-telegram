@@ -38,15 +38,23 @@ try:
 except Exception as e:
     logging.warning(f"❌ Erreur lors de l'exécution de tesseract -v : {e}")
 
+# Forçage explicite du chemin Tesseract
+FORCED_TESSERACT_PATH = "/usr/bin/tesseract"
+if os.path.exists(FORCED_TESSERACT_PATH):
+    pytesseract.pytesseract.tesseract_cmd = FORCED_TESSERACT_PATH
+    logging.info(f"⚙️ Tesseract forcé à : {FORCED_TESSERACT_PATH}")
+else:
+    logging.warning(f"❌ Chemin forcé non trouvé : {FORCED_TESSERACT_PATH}")
+
 # Recherche du binaire tesseract dans le PATH
 which_result = shutil.which("tesseract")
 logging.info(f"🔍 Résultat de shutil.which('tesseract') : {which_result}")
 
-TESSERACT_PATH = which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
+TESSERACT_PATH = pytesseract.pytesseract.tesseract_cmd or which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
 
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-    logging.info(f"✅ Tesseract trouvé à : {TESSERACT_PATH}")
+    logging.info(f"✅ Tesseract actif à : {TESSERACT_PATH}")
     logging.info(f"🔧 pytesseract utilisera ce chemin : {pytesseract.pytesseract.tesseract_cmd}")
     try:
         version = pytesseract.get_tesseract_version()
@@ -63,8 +71,7 @@ if TESSERACT_PATH:
     except Exception as e:
         logging.warning(f"⚠️ Impossible d'obtenir la version ou d'exécuter un test OCR : {e}")
 else:
-    logging.error("❌ Aucun chemin Tesseract trouvé. Valeur shutil.which : %s", which_result)
-    logging.error("🔴 OCR désactivé – vérifie que Tesseract est bien installé et dans le PATH.")
+    logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
 # Initialise FastAPI
 app = FastAPI()

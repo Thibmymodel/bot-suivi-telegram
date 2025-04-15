@@ -1,28 +1,31 @@
-# Étape 1 : image de base
+# Utilise une image officielle avec Python
 FROM python:3.11-slim
 
-# Étape 2 : installation des dépendances système (essentielles pour Tesseract et PIL)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        libglib2.0-0 \
-        libsm6 \
-        libxext6 \
-        libxrender-dev \
-        poppler-utils \
-        && rm -rf /var/lib/apt/lists/*
+# Empêche les invites interactives (utile pour apt-get)
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Étape 3 : création du répertoire de l'app
+# Met à jour le système et installe tesseract + dépendances nécessaires
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libtesseract-dev \
+    libleptonica-dev \
+    poppler-utils \
+    libgl1 \
+    libglib2.0-0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Définit le répertoire de travail
 WORKDIR /app
 
-# Étape 4 : copie du code
-COPY . .
+# Copie tous les fichiers dans le conteneur
+COPY . /app
 
-# Étape 5 : installation des dépendances Python
+# Installe les dépendances Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Étape 6 : expose le port utilisé par FastAPI
-EXPOSE 8000
+# Ajoute explicitement le binaire tesseract au PATH (au cas où)
+ENV PATH="/usr/bin:/usr/local/bin:$PATH"
 
-# Étape 7 : lance l'application
+# Définit la commande par défaut
 CMD ["python", "main.py"]
