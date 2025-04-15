@@ -2,6 +2,7 @@
 config.json
 credentials.json
 result.txt
+service_account.json
 
 # Python cache
 *.pyc

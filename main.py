@@ -14,7 +14,6 @@ from telegram.ext import (
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 import time
 
 # Logging
@@ -64,17 +63,15 @@ else:
 
 # 🔐 Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-if creds_json:
-    creds_dict = json.loads(creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+try:
+    creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
     sheet_client = gspread.authorize(creds)
     SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
     sheet = sheet_client.open_by_key(SPREADSHEET_ID)
     worksheet = sheet.worksheet("Suivi")
-else:
+except Exception as e:
     worksheet = None
-    logging.warning("❌ Credentials Google Sheets non trouvés.")
+    logging.warning(f"❌ Erreur connexion Google Sheets : {e}")
 
 # FastAPI
 app = FastAPI()
