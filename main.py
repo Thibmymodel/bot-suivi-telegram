@@ -18,6 +18,19 @@ from telegram.ext import Defaults, CallbackContext
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 🔍 (NOUVEAU) Informations système pour le debug Render
+def log_system_environment():
+    logger.info(f"📁 PATH système : {os.getenv('PATH')}")
+    logger.info("🔍 Contenu des chemins standards :")
+    for path in ["/usr/bin", "/usr/local/bin", "/bin"]:
+        try:
+            if os.path.exists(path):
+                logger.info(f"📂 {path} : {os.listdir(path)}")
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur en listant {path} : {e}")
+
+log_system_environment()
+
 # 🔍 Détection robuste de Tesseract
 def detect_tesseract_path():
     candidates = [
@@ -37,7 +50,7 @@ tesseract_path = detect_tesseract_path()
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
 logger.info(f"📌 pytesseract utilisera : {pytesseract.pytesseract.tesseract_cmd}")
 
-# Test de bon fonctionnement de Tesseract
+# 🧪 Test de bon fonctionnement de Tesseract
 if tesseract_path:
     try:
         result = subprocess.run([tesseract_path, "--version"], capture_output=True, text=True)
