@@ -1,26 +1,31 @@
-# Utilise une image Python officielle
+# Utilise une image slim avec python
 FROM python:3.11-slim
 
-# Empêche les invites interactives de bloquer l'installation
+# Empêche les prompts durant apt install
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Installe les dépendances système et Tesseract
-RUN apt-get update && \
-    apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev gcc && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Installe tesseract et dépendances système
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    libpoppler-cpp-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Crée le dossier de travail
+# Crée le dossier pour l'app
 WORKDIR /app
 
-# Copie les fichiers dans le conteneur
-COPY . /app
+# Copie les fichiers
+COPY . .
 
 # Installe les dépendances Python
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Port par défaut pour FastAPI
+# Port d'écoute
 ENV PORT=8000
 
-# Lance le script principal
+# Lance le bot
 CMD ["python", "main.py"]
