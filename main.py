@@ -24,7 +24,7 @@ def detect_tesseract_path():
         logger.info(f"✅ Tesseract trouvé automatiquement à : {path}")
         return path
     elif os.path.exists("/usr/bin/tesseract"):
-        logger.warning("❌ Tesseract non trouvé automatiquement. Utilisation du chemin par défaut : /usr/bin/tesseract")
+        logger.warning("⚠️ Tesseract non trouvé automatiquement. Utilisation du chemin par défaut : /usr/bin/tesseract")
         return "/usr/bin/tesseract"
     else:
         logger.critical("❌❌ Tesseract introuvable même au chemin par défaut. OCR indisponible.")
@@ -34,17 +34,17 @@ tesseract_path = detect_tesseract_path()
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
 logger.info(f"📌 pytesseract utilisera : {pytesseract.pytesseract.tesseract_cmd}")
 
-# Test exécution directe
+# Test de bon fonctionnement de Tesseract
 if tesseract_path:
     try:
         import subprocess
         result = subprocess.run([tesseract_path, "--version"], capture_output=True, text=True)
         if result.returncode == 0:
-            logger.info("🧪 Tesseract fonctionne correctement.")
+            logger.info(f"🧪 Tesseract fonctionne correctement : {result.stdout.splitlines()[0]}")
         else:
-            logger.error("❌ Erreur lors du test de Tesseract.")
+            logger.error("❌ Tesseract a retourné une erreur à l'exécution.")
     except Exception as e:
-        logger.error("❌ Exception lors de l'exécution de Tesseract", exc_info=True)
+        logger.exception("❌ Exception lors du test de Tesseract")
 
 # Configuration du bot Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -70,7 +70,7 @@ async def on_startup():
             else:
                 logger.warning(f"⚠️ Webhook non configuré. Code HTTP: {response.status_code}")
     except Exception as e:
-        logger.error("Erreur lors de la configuration du webhook", exc_info=True)
+        logger.exception("Erreur lors de la configuration du webhook")
 
 @app_fastapi.on_event("shutdown")
 async def on_shutdown():
@@ -83,7 +83,7 @@ def extract_text_from_image(image_bytes: bytes) -> str:
         image = Image.open(io.BytesIO(image_bytes))
         return pytesseract.image_to_string(image)
     except Exception as e:
-        logger.error("❌ Erreur lors de l'extraction OCR", exc_info=True)
+        logger.exception("❌ Erreur lors de l'extraction OCR")
         return ""
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,7 +100,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Aucun texte détecté dans l'image.")
     except Exception as e:
-        logger.error("Erreur lors du traitement de l'image", exc_info=True)
+        logger.exception("Erreur lors du traitement de l'image")
         await update.message.reply_text("❌ Une erreur est survenue lors de l'analyse de l'image.")
 
 # ----------- Webhook FastAPI -----------
@@ -113,7 +113,7 @@ async def webhook_handler(request: Request):
         await application.process_update(update)
         return JSONResponse(content={"status": "ok"}, status_code=status.HTTP_200_OK)
     except Exception as e:
-        logger.error("Erreur webhook", exc_info=True)
+        logger.exception("Erreur webhook")
         return JSONResponse(content={"status": "error", "detail": str(e)}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ----------- Handlers Telegram -----------

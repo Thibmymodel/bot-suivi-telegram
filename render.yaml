@@ -2,12 +2,9 @@ services:
   - type: web
     name: bot-suivi-telegram
     env: docker
+    plan: free
     repo: https://github.com/Thibmymodel/bot-suivi-telegram
     branch: main
-    dockerfilePath: Dockerfile
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
-        sync: false
+    rootDir: .
+    dockerfilePath: ./Dockerfile
     autoDeploy: true

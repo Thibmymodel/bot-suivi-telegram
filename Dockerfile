@@ -1,28 +1,29 @@
+# Dockerfile
 FROM python:3.11-slim
 
-# Install Tesseract OCR
+# Empêche les prompts interactifs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Installation des dépendances système et de Tesseract
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
-    libglib2.0-0 \
-    libsm6 \
-    libxrender1 \
-    libxext6 \
+    libtesseract-dev \
+    libleptonica-dev \
+    poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Copie et installation des dépendances Python
 WORKDIR /app
-
-# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source
+# Copie du code
 COPY . .
 
-# Expose port for FastAPI
-ENV PORT=10000
+# Port par défaut pour Render (utile même si FastAPI utilise webhook)
+ENV PORT 10000
 EXPOSE 10000
 
-# Launch command
+# Commande de lancement
 CMD ["python", "main.py"]
