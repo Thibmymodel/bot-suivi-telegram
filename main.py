@@ -62,12 +62,12 @@ if TESSERACT_PATH:
 else:
     logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
-# 🔐 Google Sheets via GOOGLE_APPLICATION_CREDENTIALS (clé Railway sous forme inline JSON)
+# 🔐 Google Sheets via GOOGLE_APPLICATION_CREDENTIALS (clé JSON inline depuis Railway)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 try:
     raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not raw_json or raw_json.strip().startswith("/"):
-        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide, non définie ou contient un chemin invalide")
+    if not raw_json or not raw_json.strip().startswith("{"):
+        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide, non définie ou contient un format invalide")
     json_key = json.loads(raw_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
     sheet_client = gspread.authorize(creds)
