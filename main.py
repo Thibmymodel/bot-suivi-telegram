@@ -3,11 +3,16 @@ import logging
 import shutil
 import pytesseract
 import subprocess
+from PIL import Image
+import io
 from fastapi import FastAPI
 from telegram.ext import Application, CommandHandler
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
+
+# Ajoute les chemins manuellement au PATH pour garantir que Tesseract est détectable
+os.environ["PATH"] += os.pathsep + "/usr/bin" + os.pathsep + "/usr/local/bin"
 
 # Vérifie et configure Tesseract avec plusieurs chemins possibles
 POTENTIAL_PATHS = [
@@ -16,7 +21,7 @@ POTENTIAL_PATHS = [
     "/app/.apt/usr/bin/tesseract"
 ]
 
-# Log PATH et contenu du répertoire /usr/bin pour debug Render
+# Log PATH et contenu des répertoires pour debug Render
 try:
     logging.info(f"🔍 PATH actuel : {os.environ.get('PATH')}")
     logging.info("📁 Contenu de /usr/bin :")
@@ -30,11 +35,21 @@ TESSERACT_PATH = shutil.which("tesseract") or next((p for p in POTENTIAL_PATHS i
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
     logging.info(f"✅ Tesseract trouvé à : {TESSERACT_PATH}")
+    logging.info(f"🔧 pytesseract utilisera ce chemin : {pytesseract.pytesseract.tesseract_cmd}")
     try:
         version = pytesseract.get_tesseract_version()
         logging.info(f"📦 Version Tesseract : {version}")
+
+        # Test OCR minimaliste (image blanche vide)
+        test_img = Image.new("RGB", (100, 30), color=(255, 255, 255))
+        buf = io.BytesIO()
+        test_img.save(buf, format='PNG')
+        buf.seek(0)
+        pytesseract.image_to_string(Image.open(buf))
+        logging.info("🔍 Test OCR exécuté avec succès ✅")
+
     except Exception as e:
-        logging.warning(f"⚠️ Impossible d'obtenir la version de Tesseract : {e}")
+        logging.warning(f"⚠️ Impossible d'obtenir la version ou d'exécuter un test OCR : {e}")
 else:
     logging.error("❌ Tesseract non détecté. OCR désactivé.")
 
