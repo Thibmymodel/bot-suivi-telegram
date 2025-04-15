@@ -1,11 +1,6 @@
-python-telegram-bot==20.8
-fastapi==0.95.2
-uvicorn==0.34.1
+fastapi
+uvicorn
+python-telegram-bot==20.7
+httpx
 pillow
 pytesseract
-httpx
-gspread
-oauth2client
-google-auth
-google-auth-oauthlib
-google-auth-httplib2

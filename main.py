@@ -55,15 +55,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ------------- Initialisation Telegram -------------
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 10000))
 
 if not TELEGRAM_BOT_TOKEN:
     logger.error("❌ TELEGRAM_BOT_TOKEN non défini")
 else:
-    logger.info("✅ Démarrage du bot Telegram...")
-    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(MessageHandler(filters.ALL, handle_message))
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT", 10000)),
-        webhook_url=os.getenv("WEBHOOK_URL")
-    )
+    try:
+        from telegram.ext import Application
+        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        application.add_handler(MessageHandler(filters.ALL, handle_message))
+
+        logger.info("✅ Démarrage du bot Telegram...")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL
+        )
+    except RuntimeError as e:
+        logger.error(f"❌ Erreur lors de l'initialisation du webhook : {e}")
+        logger.error("💡 Essayez : pip install 'python-telegram-bot[webhooks]'")
