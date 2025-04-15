@@ -15,6 +15,7 @@ from telegram.ext import (
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import time
+import json
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -61,13 +62,14 @@ if TESSERACT_PATH:
 else:
     logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
 
-# 🔐 Google Sheets depuis un fichier chemin (secret file Railway)
+# 🔐 Google Sheets depuis JSON inline (Railway secret file)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 try:
-    credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not credentials_path:
-        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS est vide ou non définie")
-    creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
+    raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not raw_json:
+        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS_JSON est vide ou non définie")
+    json_key = json.loads(raw_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
     sheet_client = gspread.authorize(creds)
     SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
     sheet = sheet_client.open_by_key(SPREADSHEET_ID)
