@@ -1,23 +1,27 @@
 FROM python:3.11-slim
 
-# 🔧 Installation Tesseract + dépendances nécessaires à Pillow / Tesseract
+# 🔧 Installation de Tesseract et bibliothèques nécessaires
 RUN apt-get update && \
     apt-get install -y tesseract-ocr libglib2.0-0 libsm6 libxrender1 libxext6 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 📁 Dossier de travail
+# 📁 Répertoire de travail
 WORKDIR /app
 
-# 🧠 Copie du code
+# 🧠 Copie du projet dans l'image
 COPY . .
 
-# 📦 Install dépendances Python
+# 📦 Installation des dépendances Python
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 🌍 Port pour FastAPI
+# 🌍 Port exposé pour FastAPI
 ENV PORT=8000
 EXPOSE 8000
 
-# 🧪 TEST affichage emplacement + version de Tesseract dans les logs Render
-CMD which tesseract && tesseract --version && python main.py
+# ✅ 🔍 CMD debug ultra complet AVANT de lancer l'app
+CMD echo "📌 PATH actuel : $PATH" && \
+    echo "📌 Contenu de /usr/bin :" && ls -l /usr/bin | grep tesseract && \
+    echo "📌 Emplacement de tesseract :" && which tesseract && \
+    echo "📌 Version de tesseract :" && tesseract --version && \
+    python main.py
