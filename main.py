@@ -30,7 +30,11 @@ try:
 except Exception as e:
     logging.warning(f"Erreur lors de l'inspection du système : {e}")
 
-TESSERACT_PATH = shutil.which("tesseract") or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
+# Recherche du binaire tesseract dans le PATH
+which_result = shutil.which("tesseract")
+logging.info(f"🔍 Résultat de shutil.which('tesseract') : {which_result}")
+
+TESSERACT_PATH = which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
 
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
@@ -51,7 +55,8 @@ if TESSERACT_PATH:
     except Exception as e:
         logging.warning(f"⚠️ Impossible d'obtenir la version ou d'exécuter un test OCR : {e}")
 else:
-    logging.error("❌ Tesseract non détecté. OCR désactivé.")
+    logging.error("❌ Aucun chemin Tesseract trouvé. Valeur shutil.which : %s", which_result)
+    logging.error("🔴 OCR désactivé – vérifie que Tesseract est bien installé et dans le PATH.")
 
 # Initialise FastAPI
 app = FastAPI()
