@@ -203,17 +203,23 @@ async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @app.post("/webhook")
 async def webhook(req: Request):
-    await telegram_ready.wait()
-    raw = await req.body()
-    logger.info("📦 Etape 1 : Payload brut reçu.")
-    logger.info(f"    🔸 Contenu brut : {raw[:300]}...")
-    data = await req.json()
-    logger.info("📦 Etape 2 : Tentative de transformation en objet Update.")
-    update = Update.de_json(data, bot)
-    logger.info(f"    ✅ Update transformé avec succès : {update}")
-    await telegram_app.process_update(update)
-    logger.info("✅ Etape 4 : Update envoyé à telegram_app.process_update()")
-    return {"ok": True}
+    try:
+        await telegram_ready.wait()
+        raw = await req.body()
+        logger.info("📦 Etape 1 : Payload brut reçu.")
+        logger.info(f"    🔸 Contenu brut : {raw[:300]}...")
+
+        data = await req.json()
+        logger.info("📦 Etape 2 : Tentative de transformation en objet Update.")
+        update = Update.de_json(data, bot)
+        logger.info(f"    ✅ Update transformé avec succès : {update}")
+
+        await telegram_app.process_update(update)
+        logger.info("✅ Etape 4 : Update envoyé à telegram_app.process_update()")
+        return {"ok": True}
+    except Exception as e:
+        logger.exception("❌ Exception dans la route /webhook")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 @app.get("/")
 def root():
