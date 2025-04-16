@@ -8,6 +8,8 @@ import datetime
 from PIL import Image, ImageOps
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import pytesseract
@@ -15,6 +17,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import httpx
 import asyncio
+import threading
 
 # --- LOGS ---
 logging.basicConfig(level=logging.INFO)
@@ -35,16 +38,25 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = telegram_app.bot
 telegram_ready = asyncio.Event()
 
-# --- FASTAPI ---
-app = FastAPI()
-logger.info("🚀 FastAPI instance déclarée")
+# --- TESSERACT ---
+pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
+logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
 
-@app.on_event("startup")
-def launch_bot_thread():
+# --- GOOGLE SHEET ---
+creds_dict = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
+logger.info("✅ Connexion Google Sheets réussie")
+
+# --- FASTAPI + LIFESPAN ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     def runner():
         async def start():
             try:
-                logger.info("🚦 Initialisation thread de démarrage Telegram...")
+                logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
                 await telegram_app.initialize()
                 logger.info("✅ Telegram app initialisée")
                 asyncio.create_task(telegram_app.start())
@@ -59,20 +71,11 @@ def launch_bot_thread():
             except Exception as e:
                 logger.exception("❌ Échec init Telegram")
         asyncio.run(start())
-    import threading
     threading.Thread(target=runner, daemon=True).start()
+    yield
 
-# --- TESSERACT ---
-pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
-logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
-
-# --- GOOGLE SHEET ---
-creds_dict = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
-logger.info("✅ Connexion Google Sheets réussie")
+app = FastAPI(lifespan=lifespan)
+logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
 
 @app.get("/")
 async def root():
