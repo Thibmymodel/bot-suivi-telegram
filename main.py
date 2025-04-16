@@ -149,8 +149,10 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 # --- MAIN HANDLER ---
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("📸 Etape 3 : Début du traitement d'une image Telegram.")
         message = update.message
         if not message or not message.photo:
+            logger.warning("🚫 Aucune photo détectée dans le message reçu.")
             return
 
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -158,12 +160,14 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         assistant_name = "general"
         if hasattr(message, "message_thread_id") and message.message_thread_id:
             topic_id = message.message_thread_id
+            logger.info(f"🧵 message_thread_id : {topic_id}")
             try:
                 topic_info = await bot.get_forum_topic(chat_id=GROUP_ID, message_thread_id=topic_id)
                 if topic_info.name.upper().startswith("SUIVI"):
                     assistant_name = topic_info.name.replace("SUIVI", "").strip().lower()
             except:
                 pass
+        logger.info(f"🧑 Assistant détecté : {assistant_name}")
 
         photo = await message.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
@@ -176,6 +180,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if followers == -1:
                 continue
             network = detect_network(text)
+            logger.info(f"📊 Compte détecté : {account} | Followers : {followers} | Réseau : {network}")
             accounts_data.append((account, followers, network))
             write_to_sheet(date_str, assistant_name, network, account, followers)
 
@@ -185,9 +190,10 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"❌ {date_str} – {assistant_name.upper()} – Analyse OCR impossible"
 
         await bot.send_message(chat_id=GROUP_ID, text=msg, message_thread_id=message.message_thread_id)
+        logger.info("📤 Message envoyé dans Telegram (General).")
 
     except Exception as e:
-        logger.exception("Erreur lors du traitement de l'image")
+        logger.exception("❌ Erreur complète lors du traitement image OCR.")
         fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
         await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=message.message_thread_id)
 
@@ -202,11 +208,14 @@ async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def webhook(req: Request):
     await telegram_ready.wait()
     raw = await req.body()
-    logger.info(f"📦 Payload brut reçu : {raw}")
+    logger.info("📦 Etape 1 : Payload brut reçu.")
+    logger.info(f"    🔸 Contenu brut : {raw[:300]}...")
     data = await req.json()
+    logger.info("📦 Etape 2 : Tentative de transformation en objet Update.")
     update = Update.de_json(data, telegram_app.bot)
-    logger.info(f"🔍 Update transformé : {update}")
+    logger.info(f"    ✅ Update transformé avec succès : {update}")
     await telegram_app.process_update(update)
+    logger.info("✅ Etape 4 : Update envoyé à telegram_app.process_update()")
     return {"ok": True}
 
 @app.get("/")
