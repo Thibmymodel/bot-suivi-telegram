@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from telegram import Update, Bot
+from telegram import Update, Bot, Message
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import pytesseract
 import gspread
@@ -59,6 +59,11 @@ async def lifespan(app: FastAPI):
                 logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
                 await telegram_app.initialize()
                 logger.info("✅ Telegram app initialisée")
+
+                # 📸 Handler images
+                telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+                logger.info("🧩 Handler photo enregistré")
+
                 asyncio.create_task(telegram_app.start())
                 logger.info("🚀 Bot Telegram lancé en tâche de fond")
                 telegram_ready.set()
@@ -113,4 +118,21 @@ async def webhook(req: Request):
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 # --- HANDLERS ---
-# (Pas modifié pour le moment)
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("📷 Image reçue ! Tentative de téléchargement...")
+    try:
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+
+        logger.info("🧪 OCR en cours...")
+        gray = ImageOps.grayscale(image)
+        cropped = gray.crop((0, 0, gray.width, int(gray.height * 0.4)))
+        upscaled = cropped.resize((cropped.width * 2, cropped.height * 2))
+        text = pytesseract.image_to_string(upscaled)
+
+        logger.info(f"🔍 Résultat OCR brut :\n{text}")
+        await update.message.reply_text("📸 Image reçue et analysée avec succès.")
+    except Exception as e:
+        logger.exception("❌ Erreur lors du traitement de l'image")
+        await update.message.reply_text("❌ Erreur lors du traitement de l'image.")
