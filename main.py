@@ -4,10 +4,10 @@ import io
 import json
 import datetime
 import logging
+import shutil
 from PIL import Image, ImageEnhance, ImageOps
 import pytesseract
 import gspread
-import shutil
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
 from telegram import Update, Bot
@@ -106,10 +106,8 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
     sheet.append_row([date, assistant, network, account, followers, evolution])
 
 # --- MAIN HANDLER ---
-@telegram_app.message_handler(filters.PHOTO)
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        thread_name = update.message.message_thread_id
         topic_name = update.message.forum_topic_name
         assistant_name = topic_name.replace("SUIVI ", "").strip().upper()
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -134,7 +132,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = f"❌ {date_str} – {assistant_name} – Analyse OCR impossible"
 
-        # Envoi dans le sujet "General"
         await bot.send_message(
             chat_id=GROUP_ID,
             text=msg,
@@ -145,7 +142,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Erreur lors du traitement de l'image")
         await bot.send_message(
             chat_id=GROUP_ID,
-            text=f"❌ {date_str} – {assistant_name} – Analyse OCR impossible",
+            text=f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible",
             message_thread_id=get_thread_id_by_name("General")
         )
 
@@ -168,6 +165,9 @@ async def webhook(req: Request):
 @app.get("/")
 def root():
     return {"status": "Bot operationnel"}
+
+# --- REGISTER HANDLERS ---
+telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
 # --- RUN APP ---
 if __name__ == "__main__":
