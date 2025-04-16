@@ -25,6 +25,8 @@ RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL", "http://localhost:8000").rstrip("/
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 GENERAL_TOPIC_ID_RAW = os.getenv("GENERAL_TOPIC_ID", "0")
+MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
+
 if GENERAL_TOPIC_ID_RAW == "0":
     logger.warning("⚠️ GENERAL_TOPIC_ID non défini dans les variables Railway.")
 GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
@@ -36,10 +38,11 @@ bot = Bot(token=BOT_TOKEN)
 # --- CONFIG FASTAPI AVEC LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await telegram_app.initialize()
-    await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
-    logger.info("✅ Bot Telegram démarré")
+    if not MODE_POLLING:
+        await telegram_app.initialize()
+        await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+        logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+        logger.info("✅ Bot Telegram démarré")
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -192,3 +195,10 @@ def root():
 # --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
+
+# --- MODE POLLING SI ACTIVÉ ---
+if MODE_POLLING:
+    import asyncio
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.run(telegram_app.run_polling())
