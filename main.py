@@ -44,6 +44,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
+@app.get("/force-webhook")
+def force_webhook():
+    import requests
+    response = requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+        data={"url": f"{RAILWAY_URL}/webhook"}
+    )
+    logger.info(f"🔁 Webhook forcé : {response.text}")
+    return {"webhook_response": response.json()}
+
 # --- SETUP TESSERACT ---
 TESSERACT_PATH = shutil.which("tesseract")
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH if TESSERACT_PATH else "tesseract"
