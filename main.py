@@ -26,11 +26,12 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-GENERAL_TOPIC_NAME = "General"
+GENERAL_THREAD_ID = int(os.getenv("GENERAL_TOPIC_ID"))  # Ajouté manuellement dans Railway
 
 # --- SETUP TESSERACT ---
 TESSERACT_PATH = shutil.which("tesseract")
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH if TESSERACT_PATH else "tesseract"
+logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
 
 # --- SETUP GOOGLE SHEETS ---
 credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -39,14 +40,16 @@ scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
+logger.info("✅ Connexion Google Sheets réussie")
 
 # --- TELEGRAM APPLICATION ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = Bot(token=BOT_TOKEN)
+logger.info("✅ Bot Telegram démarré")
 
 # --- UTILITY FUNCTIONS ---
 def preprocess_image(image: Image.Image) -> Image.Image:
-    image = image.convert("L")  # Niveaux de gris
+    image = image.convert("L")
     image = ImageOps.autocontrast(image)
     image = image.resize((image.width * 2, image.height * 2))
     return image
@@ -107,6 +110,7 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 
 # --- MAIN HANDLER ---
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"🧠 message_thread_id détecté : {update.message.message_thread_id}")
     try:
         topic_name = update.message.forum_topic_name
         assistant_name = topic_name.replace("SUIVI ", "").strip().upper()
@@ -119,7 +123,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         accounts_data = []
 
         for match in re.finditer(r"@\w+", text):
-            snippet = text[match.start():match.start()+100]  # zone locale autour du @
+            snippet = text[match.start():match.start()+100]
             account, followers = extract_account_and_followers(snippet)
             if followers == -1:
                 continue
@@ -135,7 +139,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await bot.send_message(
             chat_id=GROUP_ID,
             text=msg,
-            message_thread_id=get_thread_id_by_name("General")
+            message_thread_id=GENERAL_THREAD_ID
         )
 
     except Exception as e:
@@ -143,16 +147,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await bot.send_message(
             chat_id=GROUP_ID,
             text=f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible",
-            message_thread_id=get_thread_id_by_name("General")
+            message_thread_id=GENERAL_THREAD_ID
         )
-
-# --- THREAD ID FETCH ---
-def get_thread_id_by_name(name: str) -> int:
-    forum_topics = bot.get_forum_topic_list(chat_id=GROUP_ID)
-    for topic in forum_topics.topics:
-        if topic.name.lower() == name.lower():
-            return topic.message_thread_id
-    return None
 
 # --- FASTAPI ROUTES ---
 @app.post("/webhook")
