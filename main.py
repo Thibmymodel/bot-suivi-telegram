@@ -135,25 +135,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
 
-        if update.message.chat.type in ["group", "supergroup"] and update.message.is_topic_message:
-            await context.bot.send_message(
-                chat_id=update.message.chat_id,
-                message_thread_id=update.message.message_thread_id,
-                text="📸 Image reçue et analysée avec succès."
-            )
-        else:
-            await update.message.reply_text("📸 Image reçue et analysée avec succès.")
+        # ✅ Envoi dans le sujet "Général" (hors thread)
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"📸 Image analysée avec succès depuis un assistant."
+        )
 
     except Exception as e:
         logger.exception("❌ Erreur lors du traitement de l'image")
         try:
-            if update.message.chat.type in ["group", "supergroup"] and update.message.is_topic_message:
-                await context.bot.send_message(
-                    chat_id=update.message.chat_id,
-                    message_thread_id=update.message.message_thread_id,
-                    text="❌ Erreur lors du traitement de l'image."
-                )
-            else:
-                await update.message.reply_text("❌ Erreur lors du traitement de l'image.")
+            await context.bot.send_message(
+                chat_id=GROUP_ID,
+                text="❌ Erreur lors du traitement de l'image (notification globale)."
+            )
         except Exception:
-            logger.warning("❌ Impossible d'envoyer un message d'erreur (message original non trouvable)")
+            logger.warning("❌ Impossible d'envoyer un message d'erreur dans Général")
