@@ -10,6 +10,8 @@ import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -18,7 +20,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG FASTAPI ---
-app = FastAPI()
+@asynccontextmanager
+def lifespan(app: FastAPI):
+    await telegram_app.initialize()
+    await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # --- ENV VARIABLES ---
 PORT = int(os.getenv("PORT", 8000))
@@ -49,11 +58,6 @@ logger.info("✅ Connexion Google Sheets réussie")
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = Bot(token=BOT_TOKEN)
 logger.info("✅ Bot Telegram démarré")
-
-@app.on_event("startup")
-async def on_startup():
-    await bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
 
 # --- UTILITY FUNCTIONS ---
 def preprocess_image(image: Image.Image) -> Image.Image:
