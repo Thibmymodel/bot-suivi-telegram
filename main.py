@@ -15,6 +15,7 @@ from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import httpx
 import asyncio
+from contextlib import asynccontextmanager
 
 # --- CONFIG LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -34,25 +35,23 @@ bot = Bot(token=BOT_TOKEN)
 telegram_ready = asyncio.Event()
 
 # --- FASTAPI INITIALISATION ---
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
     telegram_ready.set()
-    webhook_url = f"{RAILWAY_URL}/webhook"
+
     async with httpx.AsyncClient() as client:
         await client.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-            data={"url": webhook_url}
+            data={"url": f"{RAILWAY_URL}/webhook"}
         )
-    logger.info(f"✅ Webhook Telegram activé : {webhook_url}")
+    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
     logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    yield
     await telegram_app.stop()
+
+app = FastAPI(lifespan=lifespan)
 
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
