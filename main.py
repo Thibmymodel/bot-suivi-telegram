@@ -49,9 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("🚀 FastAPI a démarré avec succès (event startup)")
+logger.info("🚀 FastAPI instance déclarée (hors event)")
 
 @app.get("/force-webhook")
 async def force_webhook():
