@@ -84,7 +84,9 @@ def extract_text_from_image(image_bytes: bytes) -> str:
         image = Image.open(io.BytesIO(image_bytes))
         cropped = image.crop((0, 0, image.width, int(image.height * 0.4)))
         image = preprocess_image(cropped)
-        return pytesseract.image_to_string(image)
+        text = pytesseract.image_to_string(image)
+        logger.info(f"📄 OCR Result: {text}")
+        return text
     except Exception as e:
         logger.error(f"Erreur OCR : {e}")
         return ""
@@ -153,6 +155,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = await message.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
         text = extract_text_from_image(image_bytes)
+
+        logger.info(f"🧠 Texte OCR brut extrait : {text}")
 
         accounts_data = []
         for match in re.finditer(r"@[\w\.]+", text):
