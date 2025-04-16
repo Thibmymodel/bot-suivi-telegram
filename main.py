@@ -36,6 +36,7 @@ bot = Bot(token=BOT_TOKEN)
 async def lifespan(app: FastAPI):
     if not MODE_POLLING:
         await telegram_app.initialize()
+        await telegram_app.start()
         await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
         logger.info(f"✅ Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
         logger.info("✅ Bot Telegram démarré")
@@ -140,6 +141,9 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message = update.message
+        if not message or not message.photo:
+            return
+
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
         assistant_name = "general"
@@ -156,8 +160,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_bytes = await photo.download_as_bytearray()
         text = extract_text_from_image(image_bytes)
 
-        logger.info(f"🧠 Texte OCR brut extrait : {text}")
-
         accounts_data = []
         for match in re.finditer(r"@[\w\.]+", text):
             snippet = text[match.start():match.start()+200]
@@ -173,12 +175,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = f"❌ {date_str} – {assistant_name.upper()} – Analyse OCR impossible"
 
-        await bot.send_message(chat_id=GROUP_ID, text=msg)
+        await bot.send_message(chat_id=GROUP_ID, text=msg, message_thread_id=message.message_thread_id)
 
     except Exception as e:
         logger.exception("Erreur lors du traitement de l'image")
         fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
-        await bot.send_message(chat_id=GROUP_ID, text=fallback_msg)
+        await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=message.message_thread_id)
 
 # --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
