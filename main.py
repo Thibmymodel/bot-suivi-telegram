@@ -47,7 +47,7 @@ logger.info("✅ Connexion Google Sheets réussie")
 
 # --- TELEGRAM APPLICATION ---
 async def set_webhook_on_startup(app: Application):
-    await app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    await app.bot.set_webhook(url=f"{RAILWAY_URL.rstrip('/')}/webhook")
     logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
 
 telegram_app = (
@@ -188,5 +188,5 @@ if __name__ == "__main__":
     telegram_app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=f"{RAILWAY_URL}/webhook"
+        webhook_url=f"{RAILWAY_URL.rstrip('/')}/webhook"
     )
