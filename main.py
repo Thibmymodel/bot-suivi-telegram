@@ -37,11 +37,10 @@ bot = Bot(token=BOT_TOKEN)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await telegram_app.initialize()
-    await telegram_app.start()
     await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
     logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+    logger.info("✅ Bot Telegram démarré")
     yield
-    await telegram_app.stop()
 
 app = FastAPI(lifespan=lifespan)
 
