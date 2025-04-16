@@ -192,6 +192,7 @@ def root():
 @app.on_event("startup")
 async def on_startup():
     await telegram_app.initialize()
+    await telegram_app.start()
     logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
     logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
 
