@@ -61,17 +61,24 @@ async def init_bot():
         return
     try:
         logger.info("🚦 Initialisation auto du bot Telegram...")
+        logger.info("⏳ Étape 1 : await telegram_app.initialize()")
         await telegram_app.initialize()
-        logger.info("✅ Telegram app initialisée")
+        logger.info("✅ Étape 1 réussie : Telegram app initialisée")
+
+        logger.info("⏳ Étape 2 : lancement telegram_app.start() en tâche de fond")
         asyncio.create_task(telegram_app.start())
-        logger.info("🚀 Telegram app démarrée en tâche de fond")
+        logger.info("✅ Étape 2 réussie : Bot lancé")
+
         telegram_ready.set()
+        logger.info("⏳ Étape 3 : enregistrement du webhook chez Telegram")
         async with httpx.AsyncClient() as client:
             res = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
                 data={"url": f"{RAILWAY_URL}/webhook"}
             )
             logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
+        logger.info("✅ Étape 3 réussie : webhook actif")
+
         init_done = True
     except Exception as e:
         logger.exception("❌ Échec init_bot()")
