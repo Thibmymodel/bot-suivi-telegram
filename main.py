@@ -27,9 +27,10 @@ SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 GENERAL_TOPIC_ID_RAW = os.getenv("GENERAL_TOPIC_ID", "0")
 MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 
-if GENERAL_TOPIC_ID_RAW == "0":
-    logger.warning("⚠️ GENERAL_TOPIC_ID non défini dans les variables Railway.")
-GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
+try:
+    GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
+except ValueError:
+    GENERAL_THREAD_ID = None
 
 # --- TELEGRAM APPLICATION ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
@@ -111,7 +112,7 @@ def extract_account_and_followers(text: str) -> tuple[str, int]:
         number = float(re.findall(r"\d+\.?\d*", raw)[0]) * 1000
         return account, int(number)
 
-    number_match = re.findall(r"\b\d{3,6}\b", text)
+    number_match = re.findall(r"\b\d{3,5}\b", text)
     if number_match:
         return account, int(number_match[0])
 
@@ -137,11 +138,18 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🧠 message_thread_id détecté : {update.message.message_thread_id}")
     try:
-        topic_name = getattr(update.message, "forum_topic_name", "GENERAL")
-        assistant_name = topic_name.replace("SUIVI ", "").strip().upper()
+        message = update.message
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
-        photo = await update.message.photo[-1].get_file()
+        # Déduction du nom de l'assistant via le nom du topic (ou fallback)
+        topic_name = getattr(message, "forum_topic_name", None)
+        assistant_name = "GENERAL"
+        if topic_name and topic_name.upper().startswith("SUIVI"):
+            assistant_name = topic_name.replace("SUIVI", "").strip().upper()
+        elif message.message_thread_id:
+            assistant_name = "ID_" + str(message.message_thread_id)
+
+        photo = await message.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
         text = extract_text_from_image(image_bytes)
 
@@ -161,19 +169,18 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = f"❌ {date_str} – {assistant_name} – Analyse OCR impossible"
 
-        await bot.send_message(
-            chat_id=GROUP_ID,
-            text=msg,
-            message_thread_id=GENERAL_THREAD_ID
-        )
+        if GENERAL_THREAD_ID:
+            await bot.send_message(chat_id=GROUP_ID, text=msg, message_thread_id=GENERAL_THREAD_ID)
+        else:
+            await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
         logger.exception("Erreur lors du traitement de l'image")
-        await bot.send_message(
-            chat_id=GROUP_ID,
-            text=f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible",
-            message_thread_id=GENERAL_THREAD_ID
-        )
+        fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
+        if GENERAL_THREAD_ID:
+            await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=GENERAL_THREAD_ID)
+        else:
+            await bot.send_message(chat_id=GROUP_ID, text=fallback_msg)
 
 # --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
