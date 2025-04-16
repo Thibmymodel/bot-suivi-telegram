@@ -49,6 +49,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.on_event("startup")
+async def startup_event():
+    logger.info("🚀 FastAPI a démarré avec succès (event startup)")
+
 @app.get("/force-webhook")
 async def force_webhook():
     try:
@@ -139,9 +143,10 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 # --- HANDLER ---
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logger.info("📸 Image reçue")
+        logger.info("📸 handle_image déclenché")
         msg = update.message
         if not msg or not msg.photo:
+            logger.info("⚠️ Aucun message ou photo dans l'update")
             return
 
         date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -151,8 +156,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 topic = await bot.get_forum_topic(chat_id=GROUP_ID, message_thread_id=msg.message_thread_id)
                 if topic.name.upper().startswith("SUIVI"):
                     assistant = topic.name.replace("SUIVI", "").strip().lower()
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"⚠️ Impossible d'extraire le topic : {e}")
 
         photo = await msg.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
@@ -177,10 +182,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- ROUTE WEBHOOK ---
 @app.post("/webhook")
 async def webhook(req: Request):
+    logger.info("📩 Webhook reçu")
     try:
         await telegram_ready.wait()
         raw = await req.body()
         update = Update.de_json(json.loads(raw), bot)
+        logger.info(f"🧠 Update reçu : {update.to_dict()}")
         await telegram_app.process_update(update)
         return {"ok": True}
     except Exception as e:
