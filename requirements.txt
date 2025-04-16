@@ -6,3 +6,5 @@ Pillow
 gspread
 oauth2client
 httpx
+nest_asyncio
+
