@@ -193,15 +193,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"📥 Message reçu : {update.message}")
-    logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
+    logger.info(f"📥 Message brut reçu : {update.to_dict()}")
+    if update.message:
+        logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
 
 # --- FASTAPI ROUTES ---
 @app.post("/webhook")
 async def webhook(req: Request):
     await telegram_ready.wait()
+    raw = await req.body()
+    logger.info(f"📦 Payload brut reçu : {raw}")
     data = await req.json()
     update = Update.de_json(data, telegram_app.bot)
+    logger.info(f"🔍 Update transformé : {update}")
     await telegram_app.process_update(update)
     return {"ok": True}
 
