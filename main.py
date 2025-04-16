@@ -10,7 +10,6 @@ import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
@@ -18,16 +17,6 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 # --- CONFIG LOGGING ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# --- CONFIG FASTAPI ---
-@asynccontextmanager
-def lifespan(app: FastAPI):
-    await telegram_app.initialize()
-    await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
-    yield
-
-app = FastAPI(lifespan=lifespan)
 
 # --- ENV VARIABLES ---
 PORT = int(os.getenv("PORT", 8000))
@@ -39,6 +28,22 @@ GENERAL_TOPIC_ID_RAW = os.getenv("GENERAL_TOPIC_ID", "0")
 if GENERAL_TOPIC_ID_RAW == "0":
     logger.warning("⚠️ GENERAL_TOPIC_ID non défini dans les variables Railway.")
 GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
+
+# --- TELEGRAM APPLICATION ---
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+bot = Bot(token=BOT_TOKEN)
+
+# --- CONFIG FASTAPI AVEC LIFESPAN ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+    yield
+    await telegram_app.stop()
+
+app = FastAPI(lifespan=lifespan)
 
 # --- SETUP TESSERACT ---
 TESSERACT_PATH = shutil.which("tesseract")
@@ -53,11 +58,6 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
-
-# --- TELEGRAM APPLICATION ---
-telegram_app = Application.builder().token(BOT_TOKEN).build()
-bot = Bot(token=BOT_TOKEN)
-logger.info("✅ Bot Telegram démarré")
 
 # --- UTILITY FUNCTIONS ---
 def preprocess_image(image: Image.Image) -> Image.Image:
