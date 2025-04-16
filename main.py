@@ -46,18 +46,14 @@ sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
 # --- TELEGRAM APPLICATION ---
-async def set_webhook_on_startup(app: Application):
-    await app.bot.set_webhook(url=f"{RAILWAY_URL.rstrip('/')}/webhook")
-    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
-
-telegram_app = (
-    Application.builder()
-    .token(BOT_TOKEN)
-    .post_init(set_webhook_on_startup)
-    .build()
-)
+telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = Bot(token=BOT_TOKEN)
 logger.info("✅ Bot Telegram démarré")
+
+@app.on_event("startup")
+async def on_startup():
+    await bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
 
 # --- UTILITY FUNCTIONS ---
 def preprocess_image(image: Image.Image) -> Image.Image:
@@ -182,11 +178,3 @@ def root():
 # --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
-
-# --- RUN APP ---
-if __name__ == "__main__":
-    telegram_app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{RAILWAY_URL.rstrip('/')}/webhook"
-    )
