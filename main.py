@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
                 # 📸 Handler images
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-                logger.info("🧹 Handler photo enregistré")
+                logger.info("🩹 Handler photo enregistré")
 
                 asyncio.create_task(telegram_app.start())
                 logger.info("🚀 Bot Telegram lancé en tâche de fond")
@@ -107,7 +107,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📟 Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📿 Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -136,8 +136,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ✅ Envoi dans le sujet "Général" (hors thread)
         date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        message = f"🧰 {date} – GENERAL – 1 compte détecté et ajouté ✅"
-        await context.bot.send_message(chat_id=GROUP_ID, text=message)
+        thread_id = update.message.message_thread_id
+        label = f"ID_{thread_id}" if thread_id else "GENERAL"
+        message = f"🧰 {date} – {label} – 1 compte détecté et ajouté ✅"
+        await context.bot.send_message(chat_id=GROUP_ID, message_thread_id=None, text=message)
 
     except Exception as e:
         logger.exception("❌ Erreur lors du traitement de l'image")
