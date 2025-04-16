@@ -10,7 +10,6 @@ import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
-from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
@@ -42,7 +41,13 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     telegram_ready.set()
-    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
+    webhook_url = f"{RAILWAY_URL}/webhook"
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+            data={"url": webhook_url}
+        )
+    logger.info(f"✅ Webhook Telegram activé : {webhook_url}")
     logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
 
 @app.on_event("shutdown")
