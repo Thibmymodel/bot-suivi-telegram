@@ -42,8 +42,8 @@ async def lifespan(app: FastAPI):
     logger.info("🔄 Entrée dans lifespan()...")
     await telegram_app.initialize()
     logger.info("✅ Telegram app initialisée")
-    await telegram_app.start()
-    logger.info("✅ Telegram app démarrée")
+    asyncio.create_task(telegram_app.start())
+    logger.info("🚀 Telegram app démarrée en tâche de fond")
     telegram_ready.set()
     async with httpx.AsyncClient() as client:
         res = await client.post(
@@ -52,8 +52,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
     yield
-    await telegram_app.stop()
-    logger.info("🛑 Telegram app arrêtée")
+    # Suppression de await telegram_app.stop() pour éviter de tuer la tâche de fond
+    logger.info("🔚 Fin du lifespan()")
 
 app = FastAPI(lifespan=lifespan)
 logger.info("🚀 FastAPI instance déclarée (hors event)")
