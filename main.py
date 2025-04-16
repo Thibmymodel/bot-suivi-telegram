@@ -46,7 +46,16 @@ sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
 # --- TELEGRAM APPLICATION ---
-telegram_app = Application.builder().token(BOT_TOKEN).build()
+async def set_webhook_on_startup(app: Application):
+    await app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+
+telegram_app = (
+    Application.builder()
+    .token(BOT_TOKEN)
+    .post_init(set_webhook_on_startup)
+    .build()
+)
 bot = Bot(token=BOT_TOKEN)
 logger.info("✅ Bot Telegram démarré")
 
