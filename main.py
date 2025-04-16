@@ -23,13 +23,13 @@ app = FastAPI()
 # --- ENV VARIABLES ---
 PORT = int(os.getenv("PORT", 8000))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL")
+RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 GENERAL_TOPIC_ID_RAW = os.getenv("GENERAL_TOPIC_ID", "0")
 if GENERAL_TOPIC_ID_RAW == "0":
     logger.warning("⚠️ GENERAL_TOPIC_ID non défini dans les variables Railway.")
-GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)  # Ajouté manuellement dans Railway
+GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
 
 # --- SETUP TESSERACT ---
 TESSERACT_PATH = shutil.which("tesseract")
@@ -165,6 +165,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📥 Message reçu : {update.message}")
+    logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
 
 # --- FASTAPI ROUTES ---
 @app.post("/webhook")
