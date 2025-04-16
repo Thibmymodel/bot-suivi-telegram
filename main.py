@@ -15,6 +15,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import httpx
 import asyncio
+import threading
 
 # --- LOGS ---
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +52,7 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
-# --- INIT BOT (LANCÉ LORS DU PREMIER /) ---
+# --- INIT BOT (FORCÉ AU LANCEMENT AVEC THREAD) ---
 init_done = False
 
 async def init_bot():
@@ -59,7 +60,7 @@ async def init_bot():
     if init_done:
         return
     try:
-        logger.info("🚦 Initialisation manuelle du bot en cours...")
+        logger.info("🚦 Initialisation auto du bot Telegram...")
         await telegram_app.initialize()
         logger.info("✅ Telegram app initialisée")
         asyncio.create_task(telegram_app.start())
@@ -75,10 +76,12 @@ async def init_bot():
     except Exception as e:
         logger.exception("❌ Échec init_bot()")
 
+# Lance dans un thread secondaire sécurisé avec loop propre
+threading.Thread(target=lambda: asyncio.run(init_bot()), daemon=True).start()
+
 @app.get("/")
 async def root():
     logger.info("📡 Ping reçu sur /")
-    await init_bot()
     return {"status": "Bot opérationnel"}
 
 @app.get("/force-webhook")
