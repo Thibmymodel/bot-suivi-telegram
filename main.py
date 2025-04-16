@@ -192,15 +192,12 @@ def root():
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
 
-# --- MODE POLLING SI ACTIVÉ ---
+# --- MODE POLLING ---
 if MODE_POLLING:
     import asyncio
     import nest_asyncio
     nest_asyncio.apply()
     asyncio.run(telegram_app.run_polling())
 else:
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(telegram_app.initialize())
-    asyncio.get_event_loop().run_until_complete(telegram_app.start())
-    asyncio.get_event_loop().run_until_complete(telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook"))
     logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
+    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
