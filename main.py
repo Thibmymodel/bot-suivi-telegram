@@ -15,7 +15,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import httpx
 import asyncio
-import threading
 
 # --- LOGS ---
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +39,29 @@ telegram_ready = asyncio.Event()
 app = FastAPI()
 logger.info("🚀 FastAPI instance déclarée")
 
+@app.on_event("startup")
+def launch_bot_thread():
+    def runner():
+        async def start():
+            try:
+                logger.info("🚦 Initialisation thread de démarrage Telegram...")
+                await telegram_app.initialize()
+                logger.info("✅ Telegram app initialisée")
+                asyncio.create_task(telegram_app.start())
+                logger.info("🚀 Bot Telegram lancé en tâche de fond")
+                telegram_ready.set()
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                        data={"url": f"{RAILWAY_URL}/webhook"}
+                    )
+                    logger.info(f"🔗 Webhook enregistré → {res.status_code} | {res.text}")
+            except Exception as e:
+                logger.exception("❌ Échec init Telegram")
+        asyncio.run(start())
+    import threading
+    threading.Thread(target=runner, daemon=True).start()
+
 # --- TESSERACT ---
 pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
 logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
@@ -51,40 +73,6 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
-
-# --- INIT BOT (FORCÉ AU LANCEMENT AVEC THREAD) ---
-init_done = False
-
-async def init_bot():
-    global init_done
-    if init_done:
-        return
-    try:
-        logger.info("🚦 Initialisation auto du bot Telegram...")
-        logger.info("⏳ Étape 1 : await telegram_app.initialize()")
-        await telegram_app.initialize()
-        logger.info("✅ Étape 1 réussie : Telegram app initialisée")
-
-        logger.info("⏳ Étape 2 : lancement telegram_app.start() en tâche de fond")
-        asyncio.create_task(telegram_app.start())
-        logger.info("✅ Étape 2 réussie : Bot lancé")
-
-        telegram_ready.set()
-        logger.info("⏳ Étape 3 : enregistrement du webhook chez Telegram")
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                data={"url": f"{RAILWAY_URL}/webhook"}
-            )
-            logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
-        logger.info("✅ Étape 3 réussie : webhook actif")
-
-        init_done = True
-    except Exception as e:
-        logger.exception("❌ Échec init_bot()")
-
-# Lance dans un thread secondaire sécurisé avec loop propre
-threading.Thread(target=lambda: asyncio.run(init_bot()), daemon=True).start()
 
 @app.get("/")
 async def root():
