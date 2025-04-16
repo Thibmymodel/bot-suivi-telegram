@@ -137,7 +137,7 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🧠 message_thread_id détecté : {update.message.message_thread_id}")
     try:
-        topic_name = update.message.forum_topic_name
+        topic_name = getattr(update.message, "forum_topic_name", "GENERAL")
         assistant_name = topic_name.replace("SUIVI ", "").strip().upper()
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
