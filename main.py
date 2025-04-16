@@ -8,7 +8,6 @@ import datetime
 from PIL import Image, ImageOps
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from telegram import Update, Bot, Message
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
@@ -62,7 +61,7 @@ async def lifespan(app: FastAPI):
 
                 # 📸 Handler images
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-                logger.info("🧩 Handler photo enregistré")
+                logger.info("🧹 Handler photo enregistré")
 
                 asyncio.create_task(telegram_app.start())
                 logger.info("🚀 Bot Telegram lancé en tâche de fond")
@@ -84,7 +83,7 @@ logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
 
 @app.get("/")
 async def root():
-    logger.info("📡 Ping reçu sur /")
+    logger.info("📱 Ping reçu sur /")
     return {"status": "Bot opérationnel"}
 
 @app.get("/force-webhook")
@@ -108,7 +107,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🧾 Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📟 Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -136,17 +135,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
 
         # ✅ Envoi dans le sujet "Général" (hors thread)
-        await context.bot.send_message(
-            chat_id=GROUP_ID,
-            text=f"📸 Image analysée avec succès depuis un assistant."
-        )
+        date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+        message = f"🧰 {date} – GENERAL – 1 compte détecté et ajouté ✅"
+        await context.bot.send_message(chat_id=GROUP_ID, text=message)
 
     except Exception as e:
         logger.exception("❌ Erreur lors du traitement de l'image")
         try:
+            date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
             await context.bot.send_message(
                 chat_id=GROUP_ID,
-                text="❌ Erreur lors du traitement de l'image (notification globale)."
+                text=f"❌ {date} – Analyse OCR impossible"
             )
         except Exception:
             logger.warning("❌ Impossible d'envoyer un message d'erreur dans Général")
