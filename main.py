@@ -10,7 +10,6 @@ import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
-from contextlib import asynccontextmanager
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import httpx
@@ -31,18 +30,17 @@ MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = Bot(token=BOT_TOKEN)
 
-# --- CONFIG FASTAPI AVEC LIFESPAN ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+# --- FASTAPI INITIALISATION ---
+app = FastAPI()
+
+@app.on_event("startup")
+async def startup():
     if not MODE_POLLING:
         await telegram_app.initialize()
         await telegram_app.start()
         await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
         logger.info(f"✅ Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
         logger.info("✅ Bot Telegram démarré")
-    yield
-
-app = FastAPI(lifespan=lifespan)
 
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
