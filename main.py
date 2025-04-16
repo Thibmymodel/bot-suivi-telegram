@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import httpx
+import asyncio
 
 # --- CONFIG LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -188,19 +189,12 @@ async def webhook(req: Request):
 def root():
     return {"status": "Bot operationnel"}
 
+@app.on_event("startup")
+async def on_startup():
+    await telegram_app.initialize()
+    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
+    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
+
 # --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
-
-# --- MODE POLLING ---
-if MODE_POLLING:
-    import asyncio
-    import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.run(telegram_app.run_polling())
-else:
-    import uvicorn
-    if __name__ == "__main__":
-        logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
-        logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
-        uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
