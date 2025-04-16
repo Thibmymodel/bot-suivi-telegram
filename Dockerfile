@@ -14,6 +14,6 @@ WORKDIR /app
 COPY . .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-CMD ["python", "main.py"]
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "on"]
+ENV PORT 8000
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --lifespan on"]
 
