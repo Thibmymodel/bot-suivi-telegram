@@ -10,6 +10,9 @@ import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from fastapi.lifespan import Lifespan
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import httpx
@@ -30,10 +33,22 @@ MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 # --- TELEGRAM APPLICATION ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = Bot(token=BOT_TOKEN)
+telegram_ready = asyncio.Event()
 
 # --- FASTAPI INITIALISATION ---
 app = FastAPI()
-telegram_ready = asyncio.Event()
+
+@app.on_event("startup")
+async def startup_event():
+    await telegram_app.initialize()
+    await telegram_app.start()
+    telegram_ready.set()
+    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
+    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await telegram_app.stop()
 
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
@@ -189,15 +204,7 @@ async def webhook(req: Request):
 
 @app.get("/")
 def root():
-    return {"status": "Bot operationnel"}
-
-@app.on_event("startup")
-async def on_startup():
-    await telegram_app.initialize()
-    await telegram_app.start()
-    telegram_ready.set()
-    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
-    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
+    return {"status": "Bot opérationnel"}
 
 # --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
