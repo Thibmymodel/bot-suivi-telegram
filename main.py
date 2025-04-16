@@ -33,15 +33,6 @@ bot = Bot(token=BOT_TOKEN)
 # --- FASTAPI INITIALISATION ---
 app = FastAPI()
 
-@app.on_event("startup")
-async def startup():
-    if not MODE_POLLING:
-        await telegram_app.initialize()
-        await telegram_app.start()
-        await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-        logger.info(f"✅ Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
-        logger.info("✅ Bot Telegram démarré")
-
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
 async def force_webhook():
@@ -207,3 +198,9 @@ if MODE_POLLING:
     import nest_asyncio
     nest_asyncio.apply()
     asyncio.run(telegram_app.run_polling())
+else:
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(telegram_app.initialize())
+    asyncio.get_event_loop().run_until_complete(telegram_app.start())
+    asyncio.get_event_loop().run_until_complete(telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook"))
+    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
