@@ -39,21 +39,6 @@ telegram_ready = asyncio.Event()
 app = FastAPI()
 logger.info("🚀 FastAPI instance déclarée")
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("🔄 Démarrage via @app.on_event('startup')...")
-    await telegram_app.initialize()
-    logger.info("✅ Telegram app initialisée")
-    asyncio.create_task(telegram_app.start())
-    logger.info("🚀 Telegram app démarrée en tâche de fond")
-    telegram_ready.set()
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-            data={"url": f"{RAILWAY_URL}/webhook"}
-        )
-        logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
-
 @app.get("/force-webhook")
 async def force_webhook():
     try:
@@ -85,11 +70,31 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
-# --- UTILS ---
-# (Pas modifié pour le moment)
+# --- LANCEMENT FORCÉ AU DÉMARRAGE ---
+init_done = False
 
-# --- HANDLER ---
-# (Pas modifié pour le moment)
+async def init_bot():
+    global init_done
+    if init_done:
+        return
+    try:
+        logger.info("🚦 Initialisation manuelle du bot en cours...")
+        await telegram_app.initialize()
+        logger.info("✅ Telegram app initialisée")
+        asyncio.create_task(telegram_app.start())
+        logger.info("🚀 Telegram app démarrée en tâche de fond")
+        telegram_ready.set()
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                data={"url": f"{RAILWAY_URL}/webhook"}
+            )
+            logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
+        init_done = True
+    except Exception as e:
+        logger.exception("❌ Échec init_bot()")
+
+asyncio.create_task(init_bot())
 
 # --- ROUTE WEBHOOK ---
 @app.post("/webhook")
