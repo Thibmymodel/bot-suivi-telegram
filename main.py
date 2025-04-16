@@ -31,7 +31,7 @@ MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 
 # --- TELEGRAM APPLICATION ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-bot = Bot(token=BOT_TOKEN)
+bot = telegram_app.bot
 telegram_ready = asyncio.Event()
 
 # --- FASTAPI INITIALISATION ---
@@ -53,7 +53,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
 async def force_webhook():
     try:
@@ -197,13 +196,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
         await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=message.message_thread_id)
 
-# --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📥 Message brut reçu : {update.to_dict()}")
     if update.message:
         logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
 
-# --- FASTAPI ROUTES ---
 @app.post("/webhook")
 async def webhook(req: Request):
     await telegram_ready.wait()
@@ -212,7 +209,7 @@ async def webhook(req: Request):
     logger.info(f"    🔸 Contenu brut : {raw[:300]}...")
     data = await req.json()
     logger.info("📦 Etape 2 : Tentative de transformation en objet Update.")
-    update = Update.de_json(data, telegram_app.bot)
+    update = Update.de_json(data, bot)
     logger.info(f"    ✅ Update transformé avec succès : {update}")
     await telegram_app.process_update(update)
     logger.info("✅ Etape 4 : Update envoyé à telegram_app.process_update()")
@@ -222,6 +219,5 @@ async def webhook(req: Request):
 def root():
     return {"status": "Bot opérationnel"}
 
-# --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
