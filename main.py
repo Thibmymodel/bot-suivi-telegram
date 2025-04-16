@@ -33,6 +33,7 @@ bot = Bot(token=BOT_TOKEN)
 
 # --- FASTAPI INITIALISATION ---
 app = FastAPI()
+telegram_ready = asyncio.Event()
 
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
@@ -180,6 +181,7 @@ async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- FASTAPI ROUTES ---
 @app.post("/webhook")
 async def webhook(req: Request):
+    await telegram_ready.wait()
     data = await req.json()
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
@@ -193,6 +195,7 @@ def root():
 async def on_startup():
     await telegram_app.initialize()
     await telegram_app.start()
+    telegram_ready.set()
     logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
     logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
 
