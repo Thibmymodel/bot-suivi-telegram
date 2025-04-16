@@ -195,4 +195,5 @@ async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
 
-telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
+general_handler = MessageHandler(filters.ALL, log_all_messages)
+telegram_app.add_handler(general_handler)
