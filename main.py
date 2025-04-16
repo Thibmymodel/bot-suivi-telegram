@@ -7,6 +7,7 @@ import logging
 from PIL import Image, ImageEnhance, ImageOps
 import pytesseract
 import gspread
+import shutil
 from oauth2client.service_account import ServiceAccountCredentials
 from fastapi import FastAPI, Request
 from telegram import Update, Bot
