@@ -108,9 +108,11 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🧾 Contenu brut reçu : {raw[:200]}")
-        update = Update.de_json(json.loads(raw), bot)
-        logger.info(f"🧠 Update reçu : {update.to_dict()}")
+        logger.info(f"🧾 Contenu brut reçu (200c max) : {raw[:200]}")
+        update_dict = json.loads(raw)
+        logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
+        update = Update.de_json(update_dict, bot)
+        logger.info(f"🧠 Update transformé avec succès → {update}")
         await telegram_app.process_update(update)
         return {"ok": True}
     except Exception as e:
