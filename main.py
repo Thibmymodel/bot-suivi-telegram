@@ -15,7 +15,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import httpx
 import asyncio
-from contextlib import asynccontextmanager
 
 # --- LOGS ---
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +36,12 @@ bot = telegram_app.bot
 telegram_ready = asyncio.Event()
 
 # --- FASTAPI ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("🔄 Entrée dans lifespan()...")
+app = FastAPI()
+logger.info("🚀 FastAPI instance déclarée")
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("🔄 Démarrage via @app.on_event('startup')...")
     await telegram_app.initialize()
     logger.info("✅ Telegram app initialisée")
     asyncio.create_task(telegram_app.start())
@@ -51,12 +53,6 @@ async def lifespan(app: FastAPI):
             data={"url": f"{RAILWAY_URL}/webhook"}
         )
         logger.info(f"🔗 Webhook setWebhook() → Status: {res.status_code} | Body: {res.text}")
-    yield
-    # Suppression de await telegram_app.stop() pour éviter de tuer la tâche de fond
-    logger.info("🔚 Fin du lifespan()")
-
-app = FastAPI(lifespan=lifespan)
-logger.info("🚀 FastAPI instance déclarée (hors event)")
 
 @app.get("/force-webhook")
 async def force_webhook():
