@@ -1,53 +1,49 @@
 import os
-import re
 import io
+import re
 import json
-import datetime
-import logging
 import shutil
-from PIL import Image, ImageEnhance, ImageOps
-import pytesseract
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import logging
+import datetime
+from PIL import Image, ImageOps
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
+import pytesseract
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import httpx
 import asyncio
 from contextlib import asynccontextmanager
 
-# --- CONFIG LOGGING ---
+# --- LOGS ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ENV VARIABLES ---
-PORT = int(os.getenv("PORT", 8000))
+# --- ENV ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 
-# --- TELEGRAM APPLICATION ---
+# --- TELEGRAM ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = telegram_app.bot
 telegram_ready = asyncio.Event()
 
-# --- FASTAPI INITIALISATION ---
+# --- FASTAPI ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
     telegram_ready.set()
-
     async with httpx.AsyncClient() as client:
         await client.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
             data={"url": f"{RAILWAY_URL}/webhook"}
         )
     logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
-    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
     yield
     await telegram_app.stop()
 
@@ -67,21 +63,23 @@ async def force_webhook():
         logger.error(f"❌ Erreur lors du reset webhook : {e}")
         return {"error": str(e)}
 
-# --- SETUP TESSERACT ---
-TESSERACT_PATH = shutil.which("tesseract")
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH if TESSERACT_PATH else "tesseract"
+@app.get("/")
+def root():
+    return {"status": "Bot opérationnel"}
+
+# --- TESSERACT ---
+pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
 logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
 
-# --- SETUP GOOGLE SHEETS ---
-credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-creds_dict = json.loads(credentials_json)
+# --- GOOGLE SHEET ---
+creds_dict = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
-# --- UTILITY FUNCTIONS ---
+# --- UTILS ---
 def preprocess_image(image: Image.Image) -> Image.Image:
     image = image.convert("L")
     image = ImageOps.autocontrast(image)
@@ -92,126 +90,109 @@ def extract_text_from_image(image_bytes: bytes) -> str:
     try:
         image = Image.open(io.BytesIO(image_bytes))
         cropped = image.crop((0, 0, image.width, int(image.height * 0.4)))
-        image = preprocess_image(cropped)
-        text = pytesseract.image_to_string(image)
-        logger.info(f"📄 OCR Result: {text}")
+        processed = preprocess_image(cropped)
+        text = pytesseract.image_to_string(processed)
+        logger.info(f"📄 OCR : {text}")
         return text
     except Exception as e:
-        logger.error(f"Erreur OCR : {e}")
+        logger.error(f"OCR Failed: {e}")
         return ""
 
 def detect_network(text: str) -> str:
     t = text.lower()
-    if "followers" in t and ("likes" in t or "following" in t):
-        return "TikTok"
-    elif "publications" in t and "followers" in t:
-        return "Instagram"
-    elif "threads" in t or "quoi de neuf" in t:
-        return "Threads"
-    elif ("abonnements" in t or "abonnés" in t) and "rejoint" in t:
-        return "Twitter"
+    if "followers" in t and ("likes" in t or "following" in t): return "TikTok"
+    if "publications" in t and "followers" in t: return "Instagram"
+    if "threads" in t or "quoi de neuf" in t: return "Threads"
+    if "abonnés" in t and "abonnements" in t: return "Twitter"
     return "Non détecté"
 
 def extract_account_and_followers(text: str) -> tuple[str, int]:
-    username_match = re.search(r"@[\w\.]+", text)
-    account = username_match.group() if username_match else "Non détecté"
-
-    number_match = re.findall(r"(\d+[.,\s]?\d*)\s*(k|followers|abonnés|k\s|k\n)", text.lower())
-    if number_match:
-        raw = number_match[0][0].replace(",", ".").replace(" ", "")
+    username = re.search(r"@\w+", text)
+    account = username.group() if username else "Non détecté"
+    numbers = re.findall(r"(\d+[.,\s]?\d*)\s*(k|followers|abonnés|k\s|k\n)", text.lower())
+    if numbers:
+        raw = numbers[0][0].replace(",", ".").replace(" ", "")
         try:
-            number = float(raw)
-            if "k" in number_match[0][1]:
-                number *= 1000
-            return account, int(number)
+            val = float(raw)
+            if "k" in numbers[0][1]: val *= 1000
+            return account, int(val)
         except:
             pass
-
     return account, -1
 
 def get_last_value_for_account(account: str, assistant: str) -> int:
     try:
         records = sheet.get_all_records()
-        records = [r for r in records if r["Compte"] == account and r["Assistant"] == assistant]
-        if not records:
+        filt = [r for r in records if r["Compte"] == account and r["Assistant"] == assistant]
+        if not filt:
             return 0
-        last = sorted(records, key=lambda x: x["Date"], reverse=True)[0]
+        last = sorted(filt, key=lambda x: x["Date"], reverse=True)[0]
         return int(last["Abonnés"])
     except:
         return 0
 
 def write_to_sheet(date: str, assistant: str, network: str, account: str, followers: int):
-    previous = get_last_value_for_account(account, assistant)
-    evolution = followers - previous if previous > 0 else ""
-    sheet.append_row([date, assistant, network, account, followers, evolution])
+    last = get_last_value_for_account(account, assistant)
+    evo = followers - last if last > 0 else ""
+    sheet.append_row([date, assistant, network, account, followers, evo])
 
-# --- MAIN HANDLER ---
+# --- HANDLER ---
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logger.info("📸 Etape 3 : Début du traitement d'une image Telegram.")
-        message = update.message
-        if not message or not message.photo:
-            logger.warning("🚫 Aucune photo détectée dans le message reçu.")
+        logger.info("📸 Image reçue")
+        msg = update.message
+        if not msg or not msg.photo:
             return
 
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-
-        assistant_name = "general"
-        if hasattr(message, "message_thread_id") and message.message_thread_id:
-            topic_id = message.message_thread_id
-            logger.info(f"🧵 message_thread_id : {topic_id}")
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+        assistant = "general"
+        if msg.message_thread_id:
             try:
-                topic_info = await bot.get_forum_topic(chat_id=GROUP_ID, message_thread_id=topic_id)
-                if topic_info.name.upper().startswith("SUIVI"):
-                    assistant_name = topic_info.name.replace("SUIVI", "").strip().lower()
+                topic = await bot.get_forum_topic(chat_id=GROUP_ID, message_thread_id=msg.message_thread_id)
+                if topic.name.upper().startswith("SUIVI"):
+                    assistant = topic.name.replace("SUIVI", "").strip().lower()
             except:
                 pass
-        logger.info(f"🧑 Assistant détecté : {assistant_name}")
 
-        photo = await message.photo[-1].get_file()
+        photo = await msg.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
         text = extract_text_from_image(image_bytes)
 
-        accounts_data = []
-        for match in re.finditer(r"@[\w\.]+", text):
+        comptes = []
+        for match in re.finditer(r"@\w+", text):
             snippet = text[match.start():match.start()+200]
             account, followers = extract_account_and_followers(snippet)
             if followers == -1:
                 continue
             network = detect_network(text)
-            logger.info(f"📊 Compte détecté : {account} | Followers : {followers} | Réseau : {network}")
-            accounts_data.append((account, followers, network))
-            write_to_sheet(date_str, assistant_name, network, account, followers)
+            comptes.append((account, followers, network))
+            write_to_sheet(date, assistant, network, account, followers)
 
-        if accounts_data:
-            msg = f"🤖 {date_str} – {assistant_name.upper()} – {len(accounts_data)} compte{'s' if len(accounts_data)>1 else ''} détecté{'s' if len(accounts_data)>1 else ''} et ajouté{'s' if len(accounts_data)>1 else ''} ✅"
-        else:
-            msg = f"❌ {date_str} – {assistant_name.upper()} – Analyse OCR impossible"
-
-        await bot.send_message(chat_id=GROUP_ID, text=msg, message_thread_id=message.message_thread_id)
-        logger.info("📤 Message envoyé dans Telegram (General).")
-
+        msg_txt = f"🤖 {date} – {assistant.upper()} – {len(comptes)} compte(s) détecté(s) ✅" if comptes else f"❌ {date} – {assistant.upper()} – Analyse OCR impossible"
+        await bot.send_message(chat_id=GROUP_ID, text=msg_txt, message_thread_id=msg.message_thread_id)
     except Exception as e:
-        logger.exception("❌ Erreur complète lors du traitement image OCR.")
-        fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
-        await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=message.message_thread_id)
+        logger.exception("❌ ERREUR handle_image")
+        await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Erreur analyse OCR", message_thread_id=update.message.message_thread_id)
+
+# --- ROUTE WEBHOOK ---
+@app.post("/webhook")
+async def webhook(req: Request):
+    try:
+        await telegram_ready.wait()
+        raw = await req.body()
+        update = Update.de_json(json.loads(raw), bot)
+        await telegram_app.process_update(update)
+        return {"ok": True}
+    except Exception as e:
+        logger.exception("❌ Erreur route /webhook")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+# --- HANDLERS ---
+telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📥 Message brut reçu : {update.to_dict()}")
     if update.message:
         logger.info(f"🧠 message_thread_id détecté : {getattr(update.message, 'message_thread_id', 'None')}")
 
-@app.post("/webhook")
-async def webhook(req: Request):
-    try:
-        await telegram_ready.wait()
-        raw = await req.body()
-        logger.info("📦 Etape 1 : Payload brut reçu.")
-        logger.info(f"    🔸 Contenu brut : {raw[:300]}...")
-
-        data = await req.json()
-        logger.info("📦 Etape 2 : Tentative de transformation en objet Update.")
-        update = Update.de_json(data, bot)
-        logger.info(f"    ✅ Update transformé avec succès : {update}")
-
-        await telegram_app.process
+telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
