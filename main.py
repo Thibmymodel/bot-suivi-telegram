@@ -1,162 +1,177 @@
 import os
-import logging
-import shutil
-import pytesseract
-import subprocess
-from PIL import Image, ImageEnhance, ImageFilter
+import re
 import io
-from datetime import datetime
-from fastapi import FastAPI
-from telegram import Update, Message
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes,
-    filters
-)
+import json
+import datetime
+import logging
+from PIL import Image, ImageEnhance, ImageOps
+import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import time
-import json
+from fastapi import FastAPI, Request
+from telegram import Update, Bot
+from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-# Logging
+# --- CONFIG LOGGING ---
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Configuration des chemins Tesseract
-os.environ["PATH"] = "/usr/bin:/usr/local/bin:/app/.apt/usr/bin:" + os.environ.get("PATH", "")
-POTENTIAL_PATHS = ["/usr/bin/tesseract", "/usr/local/bin/tesseract", "/app/.apt/usr/bin/tesseract"]
-
-try:
-    version_check = subprocess.run(["tesseract", "-v"], capture_output=True, text=True)
-    logging.info("\ud83d\udcc6 tesseract -v :")
-    logging.info(version_check.stdout or version_check.stderr)
-except Exception as e:
-    logging.warning(f"❌ Erreur lors de l'exécution de tesseract -v : {e}")
-
-which_result = shutil.which("tesseract")
-logging.info(f"🔍 Résultat de shutil.which('tesseract') : {which_result}")
-
-TESSERACT_PATH = which_result or next((p for p in POTENTIAL_PATHS if os.path.exists(p)), None)
-if TESSERACT_PATH:
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-    logging.info(f"✅ pytesseract utilisera : {TESSERACT_PATH}")
-else:
-    logging.error("❌ Aucun chemin Tesseract trouvé. OCR désactivé.")
-
-# Connexion Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-try:
-    raw_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not raw_json or not raw_json.strip().startswith("{"):
-        raise ValueError("La variable GOOGLE_APPLICATION_CREDENTIALS_JSON est vide ou invalide")
-    json_key = json.loads(raw_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
-    sheet_client = gspread.authorize(creds)
-    SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
-    sheet = sheet_client.open_by_key(SPREADSHEET_ID)
-    worksheet = sheet.worksheet("Données Journalières")
-except Exception as e:
-    worksheet = None
-    logging.warning(f"❌ Erreur connexion Google Sheets : {e}")
-
-# FastAPI
+# --- CONFIG FASTAPI ---
 app = FastAPI()
 
-# Telegram
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("RAILWAY_PUBLIC_URL")
-PORT = int(os.environ.get("PORT", 8000))
-GENERAL_TOPIC_NAME = "Général"
-GROUP_ID = int(os.environ.get("TELEGRAM_GROUP_ID", "0"))
-application = Application.builder().token(BOT_TOKEN).build()
+# --- ENV VARIABLES ---
+PORT = int(os.getenv("PORT", 8000))
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL")
+GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+GENERAL_TOPIC_NAME = "General"
 
-def preprocess_image(img_path):
-    image = Image.open(img_path).convert("L").filter(ImageFilter.SHARPEN)
-    enhancer = ImageEnhance.Contrast(image)
-    return enhancer.enhance(2)
+# --- SETUP TESSERACT ---
+TESSERACT_PATH = shutil.which("tesseract")
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH if TESSERACT_PATH else "tesseract"
 
-async def post_to_general(context, message: str):
+# --- SETUP GOOGLE SHEETS ---
+credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+creds_dict = json.loads(credentials_json)
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
+
+# --- TELEGRAM APPLICATION ---
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+bot = Bot(token=BOT_TOKEN)
+
+# --- UTILITY FUNCTIONS ---
+def preprocess_image(image: Image.Image) -> Image.Image:
+    image = image.convert("L")  # Niveaux de gris
+    image = ImageOps.autocontrast(image)
+    image = image.resize((image.width * 2, image.height * 2))
+    return image
+
+def extract_text_from_image(image_bytes: bytes) -> str:
     try:
-        await context.bot.send_message(chat_id=GROUP_ID, text=message, message_thread_id=await get_general_topic_id(context))
+        image = Image.open(io.BytesIO(image_bytes))
+        image = preprocess_image(image)
+        return pytesseract.image_to_string(image)
     except Exception as e:
-        logging.error(f"❌ Erreur envoi message dans Général : {e}")
+        logger.error(f"Erreur OCR : {e}")
+        return ""
 
-async def get_general_topic_id(context) -> int:
+def detect_network(text: str) -> str:
+    text = text.lower()
+    if "followers" in text and "likes" in text:
+        return "TikTok"
+    elif "publications" in text and "abonnés" in text:
+        return "Instagram"
+    elif "abonnements" in text and "abonnés" in text and "rejoint" in text:
+        return "Twitter"
+    elif "threads" in text:
+        return "Threads"
+    else:
+        return "Non détecté"
+
+def extract_account_and_followers(text: str) -> tuple[str, int]:
+    username_match = re.search(r"@\w+", text)
+    account = username_match.group() if username_match else "Non détecté"
+
+    number_match = re.findall(r"\d+[\.,]?\d*\s*[kK]", text)
+    if number_match:
+        raw = number_match[0].replace(" ", "").lower().replace(",", ".")
+        number = float(re.findall(r"\d+\.?\d*", raw)[0]) * 1000
+        return account, int(number)
+
+    number_match = re.findall(r"\b\d{3,6}\b", text)
+    if number_match:
+        return account, int(number_match[0])
+
+    return account, -1
+
+def get_last_value_for_account(account: str, assistant: str) -> int:
     try:
-        topics = await context.bot.get_forum_topic_list(GROUP_ID)
-        for topic in topics.topics:
-            if GENERAL_TOPIC_NAME.lower() in topic.name.lower():
-                return topic.message_thread_id
-    except Exception as e:
-        logging.error(f"❌ Erreur récupération topic Général : {e}")
-    return None
+        records = sheet.get_all_records()
+        records = [r for r in records if r["Compte"] == account and r["Assistant"] == assistant]
+        if not records:
+            return 0
+        last = sorted(records, key=lambda x: x["Date"], reverse=True)[0]
+        return int(last["Abonnés"])
+    except:
+        return 0
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot opérationnel ✅")
+def write_to_sheet(date: str, assistant: str, network: str, account: str, followers: int):
+    previous = get_last_value_for_account(account, assistant)
+    evolution = followers - previous if previous > 0 else ""
+    sheet.append_row([date, assistant, network, account, followers, evolution])
 
-application.add_handler(CommandHandler("start", start))
-
+# --- MAIN HANDLER ---
+@telegram_app.message_handler(filters.PHOTO)
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        photo = update.message.photo[-1]
-        file = await photo.get_file()
-        file_path = f"temp_{update.message.message_id}.jpg"
-        await file.download_to_drive(file_path)
+        thread_name = update.message.message_thread_id
+        topic_name = update.message.forum_topic_name
+        assistant_name = topic_name.replace("SUIVI ", "").strip().upper()
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
-        image = preprocess_image(file_path)
-        text = pytesseract.image_to_string(image, config='--psm 6')
-        os.remove(file_path)
+        photo = await update.message.photo[-1].get_file()
+        image_bytes = await photo.download_as_bytearray()
+        text = extract_text_from_image(image_bytes)
 
-        if not text.strip():
-            await update.message.reply_text("❌ Aucun texte OCR détecté")
-            await post_to_general(context, f"❌ {datetime.now().strftime('%d/%m')} – Aucune donnée exploitable détectée")
-            return
+        accounts_data = []
 
-        assistant = f"@{update.effective_user.username}"
-        reseau, compte = "Non détecté", "Non détecté"
+        for match in re.finditer(r"@\w+", text):
+            snippet = text[match.start():match.start()+100]  # zone locale autour du @
+            account, followers = extract_account_and_followers(snippet)
+            if followers == -1:
+                continue
+            network = detect_network(text)
+            accounts_data.append((account, followers, network))
+            write_to_sheet(date_str, f"@{assistant_name.lower()}", network, account, followers)
 
-        if "followers" in text.lower() and "publications" in text.lower():
-            reseau = "Instagram"
-        elif "followers" in text.lower() and "j'aime" in text.lower():
-            reseau = "TikTok"
-        elif "threads" in text.lower():
-            reseau = "Threads"
-        elif "tweets" in text.lower() or "abonnements" in text.lower():
-            reseau = "Twitter"
-
-        for line in text.splitlines():
-            if line.strip().startswith("@"):  # identifiant du compte
-                compte = line.strip().split()[0]
-                break
-
-        abonnes = next((int(w) for w in text.replace(",", "").split() if w.isdigit() and 100 < int(w) < 10_000_000), "?")
-
-        evolution = "?"
-        mots = text.replace("+", " ").replace("-", " ").split()
-        for i in range(len(mots) - 1):
-            if mots[i].lower().startswith("j-1") and mots[i+1].isdigit():
-                evolution = int(mots[i+1])
-                break
-
-        now = datetime.now().strftime("%Y-%m-%d 00:00:00")
-
-        if worksheet:
-            worksheet.append_row([now, assistant, reseau, compte, abonnes, evolution])
-            await update.message.reply_text("✅ Données ajoutées à Google Sheets")
-            await post_to_general(context, f"🤖 {datetime.now().strftime('%d/%m')} – 1 compte détecté et ajouté ✅")
+        if accounts_data:
+            msg = f"🤖 {date_str} – {assistant_name} – {len(accounts_data)} compte{'s' if len(accounts_data)>1 else ''} détecté{'s' if len(accounts_data)>1 else ''} et ajouté{'s' if len(accounts_data)>1 else ''} ✅"
         else:
-            await update.message.reply_text("⚠️ Feuille Google Sheets non connectée")
-            await post_to_general(context, f"❌ {datetime.now().strftime('%d/%m')} – Feuille Google Sheet non connectée")
+            msg = f"❌ {date_str} – {assistant_name} – Analyse OCR impossible"
+
+        # Envoi dans le sujet "General"
+        await bot.send_message(
+            chat_id=GROUP_ID,
+            text=msg,
+            message_thread_id=get_thread_id_by_name("General")
+        )
 
     except Exception as e:
-        logging.error(f"Erreur OCR : {e}")
-        await update.message.reply_text("❌ Erreur lors du traitement de l'image")
-        await post_to_general(context, f"❌ {datetime.now().strftime('%d/%m')} – Erreur lors de l'analyse de l'image")
+        logger.exception("Erreur lors du traitement de l'image")
+        await bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"❌ {date_str} – {assistant_name} – Analyse OCR impossible",
+            message_thread_id=get_thread_id_by_name("General")
+        )
 
-application.add_handler(MessageHandler(filters.PHOTO, handle_image))
+# --- THREAD ID FETCH ---
+def get_thread_id_by_name(name: str) -> int:
+    forum_topics = bot.get_forum_topic_list(chat_id=GROUP_ID)
+    for topic in forum_topics.topics:
+        if topic.name.lower() == name.lower():
+            return topic.message_thread_id
+    return None
 
+# --- FASTAPI ROUTES ---
+@app.post("/webhook")
+async def webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+@app.get("/")
+def root():
+    return {"status": "Bot operationnel"}
+
+# --- RUN APP ---
 if __name__ == "__main__":
-    logging.info("✅ Démarrage du bot Telegram...")
-    application.run_webhook(
+    telegram_app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=WEBHOOK_URL,
+        webhook_url=f"{RAILWAY_URL}/webhook"
     )
