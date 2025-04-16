@@ -39,25 +39,6 @@ telegram_ready = asyncio.Event()
 app = FastAPI()
 logger.info("🚀 FastAPI instance déclarée")
 
-@app.get("/force-webhook")
-async def force_webhook():
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                data={"url": f"{RAILWAY_URL}/webhook"}
-            )
-        logger.info(f"✅ Webhook forcé : {response.text}")
-        return {"webhook_response": response.json()}
-    except Exception as e:
-        logger.error(f"❌ Erreur lors du reset webhook : {e}")
-        return {"error": str(e)}
-
-@app.get("/")
-def root():
-    logger.info("📡 Ping reçu sur /")
-    return {"status": "Bot opérationnel"}
-
 # --- TESSERACT ---
 pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
 logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
@@ -70,7 +51,7 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
-# --- LANCEMENT FORCÉ AU DÉMARRAGE ---
+# --- INIT BOT (LANCÉ LORS DU PREMIER /) ---
 init_done = False
 
 async def init_bot():
@@ -94,7 +75,25 @@ async def init_bot():
     except Exception as e:
         logger.exception("❌ Échec init_bot()")
 
-asyncio.create_task(init_bot())
+@app.get("/")
+async def root():
+    logger.info("📡 Ping reçu sur /")
+    await init_bot()
+    return {"status": "Bot opérationnel"}
+
+@app.get("/force-webhook")
+async def force_webhook():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                data={"url": f"{RAILWAY_URL}/webhook"}
+            )
+        logger.info(f"✅ Webhook forcé : {response.text}")
+        return {"webhook_response": response.json()}
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du reset webhook : {e}")
+        return {"error": str(e)}
 
 # --- ROUTE WEBHOOK ---
 @app.post("/webhook")
