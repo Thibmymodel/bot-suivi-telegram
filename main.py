@@ -153,6 +153,10 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_thread_id=GENERAL_THREAD_ID
         )
 
+# --- DEBUG CATCH ALL MESSAGES ---
+async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"📥 Message reçu : {update.message}")
+
 # --- FASTAPI ROUTES ---
 @app.post("/webhook")
 async def webhook(req: Request):
@@ -167,6 +171,7 @@ def root():
 
 # --- REGISTER HANDLERS ---
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
 
 # --- RUN APP ---
 if __name__ == "__main__":
