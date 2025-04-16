@@ -214,16 +214,4 @@ async def webhook(req: Request):
         update = Update.de_json(data, bot)
         logger.info(f"    ✅ Update transformé avec succès : {update}")
 
-        await telegram_app.process_update(update)
-        logger.info("✅ Etape 4 : Update envoyé à telegram_app.process_update()")
-        return {"ok": True}
-    except Exception as e:
-        logger.exception("❌ Exception dans la route /webhook")
-        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
-
-@app.get("/")
-def root():
-    return {"status": "Bot opérationnel"}
-
-telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-telegram_app.add_handler(MessageHandler(filters.ALL, log_all_messages))
+        await telegram_app.process
