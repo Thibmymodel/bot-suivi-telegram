@@ -24,13 +24,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-GENERAL_TOPIC_ID_RAW = os.getenv("GENERAL_TOPIC_ID", "0")
 MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
-
-try:
-    GENERAL_THREAD_ID = int(GENERAL_TOPIC_ID_RAW)
-except ValueError:
-    GENERAL_THREAD_ID = None
 
 # --- TELEGRAM APPLICATION ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
@@ -42,7 +36,7 @@ async def lifespan(app: FastAPI):
     if not MODE_POLLING:
         await telegram_app.initialize()
         await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-        logger.info(f"🔁 Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+        logger.info(f" Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
         logger.info("✅ Bot Telegram démarré")
     yield
 
@@ -56,7 +50,7 @@ def force_webhook():
         f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
         data={"url": f"{RAILWAY_URL}/webhook"}
     )
-    logger.info(f"🔁 Webhook forcé : {response.text}")
+    logger.info(f" Webhook forcé : {response.text}")
     return {"webhook_response": response.json()}
 
 # --- SETUP TESSERACT ---
@@ -83,38 +77,39 @@ def preprocess_image(image: Image.Image) -> Image.Image:
 def extract_text_from_image(image_bytes: bytes) -> str:
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        image = preprocess_image(image)
+        cropped = image.crop((0, 0, image.width, int(image.height * 0.4)))
+        image = preprocess_image(cropped)
         return pytesseract.image_to_string(image)
     except Exception as e:
         logger.error(f"Erreur OCR : {e}")
         return ""
 
 def detect_network(text: str) -> str:
-    text = text.lower()
-    if "followers" in text and "likes" in text:
+    t = text.lower()
+    if "followers" in t and ("likes" in t or "following" in t):
         return "TikTok"
-    elif "publications" in text and "abonnés" in text:
+    elif "publications" in t and "followers" in t:
         return "Instagram"
-    elif "abonnements" in text and "abonnés" in text and "rejoint" in text:
-        return "Twitter"
-    elif "threads" in text:
+    elif "threads" in t or "quoi de neuf" in t:
         return "Threads"
-    else:
-        return "Non détecté"
+    elif ("abonnements" in t or "abonnés" in t) and "rejoint" in t:
+        return "Twitter"
+    return "Non détecté"
 
 def extract_account_and_followers(text: str) -> tuple[str, int]:
-    username_match = re.search(r"@\w+", text)
+    username_match = re.search(r"@[w\.]+", text)
     account = username_match.group() if username_match else "Non détecté"
 
-    number_match = re.findall(r"\d+[\.,]?\d*\s*[kK]", text)
+    number_match = re.findall(r"(\d+[.,\s]?\d*)\s*(k|followers|abonnés|k\s|k\n)", text.lower())
     if number_match:
-        raw = number_match[0].replace(" ", "").lower().replace(",", ".")
-        number = float(re.findall(r"\d+\.?\d*", raw)[0]) * 1000
-        return account, int(number)
-
-    number_match = re.findall(r"\b\d{3,5}\b", text)
-    if number_match:
-        return account, int(number_match[0])
+        raw = number_match[0][0].replace(",", ".").replace(" ", "")
+        try:
+            number = float(raw)
+            if "k" in number_match[0][1]:
+                number *= 1000
+            return account, int(number)
+        except:
+            pass
 
     return account, -1
 
@@ -136,51 +131,45 @@ def write_to_sheet(date: str, assistant: str, network: str, account: str, follow
 
 # --- MAIN HANDLER ---
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"🧠 message_thread_id détecté : {update.message.message_thread_id}")
     try:
         message = update.message
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
-        # Déduction du nom de l'assistant via le nom du topic (ou fallback)
-        topic_name = getattr(message, "forum_topic_name", None)
-        assistant_name = "GENERAL"
-        if topic_name and topic_name.upper().startswith("SUIVI"):
-            assistant_name = topic_name.replace("SUIVI", "").strip().upper()
-        elif message.message_thread_id:
-            assistant_name = "ID_" + str(message.message_thread_id)
+        assistant_name = "general"
+        if hasattr(message, "message_thread_id") and message.message_thread_id:
+            topic_id = message.message_thread_id
+            try:
+                topic_info = await bot.get_forum_topic(chat_id=GROUP_ID, message_thread_id=topic_id)
+                if topic_info.name.upper().startswith("SUIVI"):
+                    assistant_name = topic_info.name.replace("SUIVI", "").strip().lower()
+            except:
+                pass
 
         photo = await message.photo[-1].get_file()
         image_bytes = await photo.download_as_bytearray()
         text = extract_text_from_image(image_bytes)
 
         accounts_data = []
-
-        for match in re.finditer(r"@\w+", text):
-            snippet = text[match.start():match.start()+100]
+        for match in re.finditer(r"@[w\.]+", text):
+            snippet = text[match.start():match.start()+200]
             account, followers = extract_account_and_followers(snippet)
             if followers == -1:
                 continue
             network = detect_network(text)
             accounts_data.append((account, followers, network))
-            write_to_sheet(date_str, f"@{assistant_name.lower()}", network, account, followers)
+            write_to_sheet(date_str, assistant_name, network, account, followers)
 
         if accounts_data:
-            msg = f"🤖 {date_str} – {assistant_name} – {len(accounts_data)} compte{'s' if len(accounts_data)>1 else ''} détecté{'s' if len(accounts_data)>1 else ''} et ajouté{'s' if len(accounts_data)>1 else ''} ✅"
+            msg = f"🤖 {date_str} – {assistant_name.upper()} – {len(accounts_data)} compte{'s' if len(accounts_data)>1 else ''} détecté{'s' if len(accounts_data)>1 else ''} et ajouté{'s' if len(accounts_data)>1 else ''} ✅"
         else:
-            msg = f"❌ {date_str} – {assistant_name} – Analyse OCR impossible"
+            msg = f"❌ {date_str} – {assistant_name.upper()} – Analyse OCR impossible"
 
-        if GENERAL_THREAD_ID:
-            await bot.send_message(chat_id=GROUP_ID, text=msg, message_thread_id=GENERAL_THREAD_ID)
-        else:
-            await bot.send_message(chat_id=GROUP_ID, text=msg)
+        await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
         logger.exception("Erreur lors du traitement de l'image")
         fallback_msg = f"❌ {datetime.datetime.now().strftime('%Y-%m-%d')} – Analyse OCR impossible"
-        if GENERAL_THREAD_ID:
-            await bot.send_message(chat_id=GROUP_ID, text=fallback_msg, message_thread_id=GENERAL_THREAD_ID)
-        else:
-            await bot.send_message(chat_id=GROUP_ID, text=fallback_msg)
+        await bot.send_message(chat_id=GROUP_ID, text=fallback_msg)
 
 # --- DEBUG CATCH ALL MESSAGES ---
 async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
