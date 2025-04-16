@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
+import httpx
 
 # --- CONFIG LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,7 @@ async def lifespan(app: FastAPI):
     if not MODE_POLLING:
         await telegram_app.initialize()
         await telegram_app.bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-        logger.info(f" Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
+        logger.info(f"✅ Webhook Telegram réinitialisé : {RAILWAY_URL}/webhook")
         logger.info("✅ Bot Telegram démarré")
     yield
 
@@ -44,14 +45,18 @@ app = FastAPI(lifespan=lifespan)
 
 # --- ROUTE POUR FORCER LE WEBHOOK À LA DEMANDE ---
 @app.get("/force-webhook")
-def force_webhook():
-    import requests
-    response = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-        data={"url": f"{RAILWAY_URL}/webhook"}
-    )
-    logger.info(f" Webhook forcé : {response.text}")
-    return {"webhook_response": response.json()}
+async def force_webhook():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                data={"url": f"{RAILWAY_URL}/webhook"}
+            )
+        logger.info(f"✅ Webhook forcé : {response.text}")
+        return {"webhook_response": response.json()}
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du reset webhook : {e}")
+        return {"error": str(e)}
 
 # --- SETUP TESSERACT ---
 TESSERACT_PATH = shutil.which("tesseract")
@@ -97,7 +102,7 @@ def detect_network(text: str) -> str:
     return "Non détecté"
 
 def extract_account_and_followers(text: str) -> tuple[str, int]:
-    username_match = re.search(r"@[w\.]+", text)
+    username_match = re.search(r"@[\w\.]+", text)
     account = username_match.group() if username_match else "Non détecté"
 
     number_match = re.findall(r"(\d+[.,\s]?\d*)\s*(k|followers|abonnés|k\s|k\n)", text.lower())
@@ -150,7 +155,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = extract_text_from_image(image_bytes)
 
         accounts_data = []
-        for match in re.finditer(r"@[w\.]+", text):
+        for match in re.finditer(r"@[\w\.]+", text):
             snippet = text[match.start():match.start()+200]
             account, followers = extract_account_and_followers(snippet)
             if followers == -1:
