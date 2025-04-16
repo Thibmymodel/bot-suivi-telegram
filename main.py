@@ -199,5 +199,8 @@ if MODE_POLLING:
     nest_asyncio.apply()
     asyncio.run(telegram_app.run_polling())
 else:
-    logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
-    logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
+    import uvicorn
+    if __name__ == "__main__":
+        logger.info(f"✅ Webhook Telegram activé : {RAILWAY_URL}/webhook")
+        logger.info("ℹ️ Pour forcer le webhook manuellement : /force-webhook")
+        uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
