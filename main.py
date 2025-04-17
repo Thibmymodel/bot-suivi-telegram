@@ -135,13 +135,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 username = u
 
         username = corriger_username(username, reseau)
-        logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
+        logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        numbers = re.findall(r"\b\d{1,3}(?:[ .,]\d{3})*\b", text.replace("\n", " "))
-        if reseau == "instagram" and len(numbers) >= 3:
-            abonnés = numbers[1].replace(" ", "").replace(",", "").replace(".", "")
-        else:
+        if reseau == "instagram":
+            pattern_three_numbers = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
+            match = pattern_three_numbers.search(text.replace("\n", " "))
+            if match:
+                abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
+
+        if not abonnés:
             pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
             match = pattern_stats.search(text.replace("\n", " "))
             if match:
