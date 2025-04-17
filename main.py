@@ -133,7 +133,7 @@ def detect_social_network(text):
     return "unknown"
 
 def clean_number(value):
-    value = value.lower().replace(" ","").replace(",", ".")
+    value = value.lower().replace(" ", "").replace(",", ".")
     if 'k' in value:
         return int(float(value.replace('k', '')) * 1000)
     if 'm' in value:
@@ -151,6 +151,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"⏰ Message {message_id} déjà traité. Ignoré.")
             return
         already_processed.add(message_id)
+        logger.info(f"📌 Nouveau message ID ajouté aux traités : {message_id}")
 
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
@@ -180,16 +181,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         all_usernames = re.findall(r"@([a-zA-Z0-9_.]{3,30})", text)
         username = all_usernames[0] if all_usernames else None
+        logger.warning(f"👀 OCR username détecté : {username if username else 'Non trouvé'}")
 
         followers_match = re.search(r"(\d{1,3}(?:[.,\s]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
 
-        logger.warning(f"👀 OCR username détecté : {username}")
-        logger.warning(f"👀 OCR abonnés détecté : {followers_match.group(1) if followers_match else 'Non trouvé'}")
+        if not followers_match:
+            logger.warning("🔍 Recherche secondaire pour les abonnés...")
+            match = re.findall(r"\b(\d{1,3}(?:[.,\s]\d{1,3})*)\b", text)
+            for number in match:
+                if "followers" in text.lower() or "abonnés" in text.lower():
+                    followers_match = re.match(r".*", number)  # Mock pour l'utiliser ensuite
+                    followers = clean_number(number)
+                    break
 
         if not username or not followers_match:
+            logger.warning(f"👀 OCR abonnés détecté : Non trouvé")
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
+        if 'followers' not in text.lower() and 'abonn' not in text.lower():
+            raise ValueError("Mention abonnés absente")
+
         followers = clean_number(followers_match.group(1))
+        logger.warning(f"👀 OCR abonnés détecté : {followers}")
 
         sheet.append_row([date, network, va_name, f"@{username}", followers, "="])
         logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
