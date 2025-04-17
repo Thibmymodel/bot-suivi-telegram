@@ -158,7 +158,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abonnés = abonnés[-3:]
 
         if not abonnés:
-            # Fallback : on récupère le nombre entre le mot "followers" et "suivi(e)s"
             text_clean = text.replace("\n", " ").lower()
             parts = re.split(r"followers|abonn[ée]s", text_clean)
             if len(parts) > 1:
@@ -181,7 +180,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message_counter[(today, assistant)] += 1
 
-        topic_list = await bot.get_forum_topic_list(chat_id=GROUP_ID)
+        topic_list = await context.bot.get_forum_topic_list(chat_id=GROUP_ID)
         general_topic = next((t for t in topic_list if t.name.lower() == "général"), None)
         if general_topic:
             count = message_counter[(today, assistant)]
@@ -210,7 +209,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     body = await req.body()
-    logger.info(f"📥 Webhook reçu → traitement en cours...")
+    logger.info(f"📅 Webhook reçu → traitement en cours...")
     await telegram_ready.wait()
     await telegram_app.update_queue.put(Update.de_json(json.loads(body), bot))
     return JSONResponse(content={"status": "ok"})
