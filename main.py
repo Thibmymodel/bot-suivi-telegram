@@ -138,11 +138,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(followers|abonn[\u00e9e]s?|j'aime|likes)", text, re.IGNORECASE)
-        if abonnés_match:
-            abonnés = abonnés_match[0][0].replace(".", "").replace(",", "").replace(" ", "")
-        else:
-            logger.warning("⚠️ Aucune donnée d'abonnés trouvée")
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            nombre_match = re.search(r"(\d{1,3}(?:[.,]\d{3})*|\d+)", line)
+            if nombre_match:
+                suivant = lines[i+1] if i+1 < len(lines) else ""
+                if re.search(r"followers|abonn[ée]s?|j'aime|likes", line, re.IGNORECASE) or re.search(r"followers|abonn[ée]s?|j'aime|likes", suivant, re.IGNORECASE):
+                    abonnés = nombre_match.group(1).replace(".", "").replace(",", "").replace(" ", "")
+                    break
 
         if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
@@ -156,7 +159,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        msg = f"🧰 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        msg = f"🪰 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
