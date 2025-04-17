@@ -62,14 +62,20 @@ except Exception as e:
     KNOWN_HANDLES = {}
     logger.warning(f"⚠️ Échec chargement known_handles.json : {e}")
 
-def corriger_username(username_ocr: str, reseau: str) -> str:
+def corriger_username(text: str, reseau: str) -> str:
     handles = KNOWN_HANDLES.get(reseau.lower(), [])
-    username_ocr_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
-    candidats = get_close_matches(username_ocr_clean.lower(), handles, n=1, cutoff=0.6)
-    if candidats:
-        logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
-        return candidats[0]
-    return username_ocr
+    for handle in handles:
+        if f"@{handle}".lower() in text.lower():
+            logger.info(f"🔎 Handle exact trouvé dans OCR : @{handle}")
+            return handle
+    # fallback sur approche approximative
+    usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
+    for u in usernames:
+        candidats = get_close_matches(u.lower(), handles, n=1, cutoff=0.85)
+        if candidats:
+            logger.info(f"🔁 Correction OCR : '{u}' → '{candidats[0]}'")
+            return candidats[0]
+    return "Non trouvé"
 
 # --- PHOTO HANDLER ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,40 +119,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reseau = "instagram"
 
-        usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
-        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-        username = "Non trouvé"
-        for u in usernames:
-            matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
-            if matches:
-                username = matches[0]
-                break
-        if username == "Non trouvé" and usernames:
-            username = usernames[0]
-
+        username = corriger_username(text, reseau)
         if username == "Non trouvé":
-            urls = re.findall(r"getallmylinks\.com/([a-zA-Z0-9_.]+)", text)
-            for u in urls:
-                match = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
-                if match:
-                    username = match[0]
-                    break
-                username = u
+            raise ValueError("Nom d'utilisateur non trouvé avec OCR")
 
-        username = corriger_username(username, reseau)
         logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
         text_clean = text.replace("\n", " ")
 
-        # Recherche précise followers/abonnés dans le texte OCR
         triplet_regex = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
         triplet_match = triplet_regex.search(text_clean)
         if triplet_match:
             candidates = [triplet_match.group(i).replace(" ", "").replace(",", "").replace(".", "") for i in range(1, 4)]
             label_match = re.search(r"publications\s+followers\s+suivi\(e\)s", text_clean, re.IGNORECASE)
             if label_match:
-                abonnés = candidates[1]  # followers est le deuxième terme
+                abonnés = candidates[1]
 
         if not abonnés:
             pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
@@ -168,7 +156,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await bot.send_message(
             chat_id=GROUP_ID,
-            text=f"🧬 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+            text=f"🤬 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         )
 
     except Exception as e:
@@ -208,7 +196,7 @@ async def root():
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    logger.info("📬 Webhook reçu → traitement en cours...")
+    logger.info("📨 Webhook reçu → traitement en cours...")
     try:
         await telegram_ready.wait()
         update_data = await request.json()
