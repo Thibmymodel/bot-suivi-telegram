@@ -132,7 +132,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet.append_row(row)
 
         general_topic_id = 1309
-        msg = f"\ud83e\udd16 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        msg = f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         await bot.send_message(chat_id=GROUP_ID, message_thread_id=general_topic_id, text=msg)
 
     except Exception as e:
