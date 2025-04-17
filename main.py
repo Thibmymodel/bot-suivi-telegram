@@ -52,6 +52,7 @@ logger.info("✅ Connexion Google Sheets réussie")
 
 # --- DOUBLONS ---
 already_processed = set()
+message_counter = {}
 
 # --- CHARGEMENT DES HANDLES ---
 try:
@@ -88,8 +89,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         assistant = topic_name.replace("SUIVI ", "").strip().upper()
-        photo = message.photo[-1]
+        message_counter.setdefault((datetime.datetime.now().strftime("%d/%m/%Y"), assistant), 0)
 
+        photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
         image = Image.open(io.BytesIO(img_bytes))
@@ -145,7 +147,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
 
         if not abonnés:
-            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[\u00e9e]s?|j'aime|likes))", re.IGNORECASE)
             match = pattern_stats.search(text.replace("\n", " "))
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
@@ -162,76 +164,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        msg = f"🦠 {today} - {assistant} - 1 compte détecté et ajouté ✅"
-        await bot.send_message(chat_id=GROUP_ID, text=msg)
+        message_counter[(today, assistant)] += 1
+
+        count = message_counter[(today, assistant)]
+        await bot.send_message(chat_id=GROUP_ID, text=f"🤖 {today} - {assistant} - {count} compte{'s' if count > 1 else ''} détecté et ajouté ✅")
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
         await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
-
-# --- FASTAPI + LIFESPAN ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    def runner():
-        async def start():
-            try:
-                logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
-                await telegram_app.initialize()
-                logger.info("✅ Telegram app initialisée")
-
-                telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.ALL, handle_photo))
-                logger.info("📷 Handler photo enregistré")
-
-                asyncio.create_task(telegram_app.start())
-                logger.info("🚀 Bot Telegram lancé en tâche de fond")
-                telegram_ready.set()
-                async with httpx.AsyncClient() as client:
-                    res = await client.post(
-                        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                        data={"url": f"{RAILWAY_URL}/webhook"}
-                    )
-                    logger.info(f"🔗 Webhook enregistré → {res.status_code} | {res.text}")
-            except Exception as e:
-                logger.exception("❌ Échec init Telegram")
-        asyncio.run(start())
-    threading.Thread(target=runner, daemon=True).start()
-    yield
-
-app = FastAPI(lifespan=lifespan)
-logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
-
-@app.get("/")
-async def root():
-    logger.info("📱 Ping reçu sur /")
-    return {"status": "Bot opérationnel"}
-
-@app.get("/force-webhook")
-async def force_webhook():
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                data={"url": f"{RAILWAY_URL}/webhook"}
-            )
-        logger.info(f"✅ Webhook forcé : {response.text}")
-        return {"webhook_response": response.json()}
-    except Exception as e:
-        logger.error(f"❌ Erreur lors du reset webhook : {e}")
-        return {"error": str(e)}
-
-@app.post("/webhook")
-async def webhook(req: Request):
-    logger.info("📬 Webhook reçu → traitement en cours...")
-    try:
-        await telegram_ready.wait()
-        raw = await req.body()
-        logger.info(f"📓  Contenu brut reçu (200c max) : {raw[:200]}")
-        update_dict = json.loads(raw)
-        logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
-        update = Update.de_json(update_dict, bot)
-        logger.info(f"😮 Update transformé avec succès → {update}")
-        await telegram_app.process_update(update)
-        return {"ok": True}
-    except Exception as e:
-        logger.exception("❌ Erreur route /webhook")
-        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
