@@ -70,9 +70,75 @@ def corriger_username(username_ocr: str, reseau: str) -> str:
         return candidats[0]
     return username_ocr
 
-# --- HANDLER PHOTO (à compléter plus tard) ---
+# --- HANDLER PHOTO ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass  # Placeholder pour éviter l'erreur de référence
+    try:
+        message = update.message
+        if not message or not message.photo:
+            return
+
+        thread_id = message.message_thread_id
+        reply = message.reply_to_message
+        if not reply or not hasattr(reply, "forum_topic_created"):
+            return
+
+        topic_name = reply.forum_topic_created.name
+        if not topic_name.startswith("SUIVI "):
+            return
+
+        assistant = topic_name.replace("SUIVI ", "").strip().upper()
+        photo = message.photo[-1]
+
+        file = await bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        image = Image.open(io.BytesIO(img_bytes))
+        width, height = image.size
+        cropped = image.crop((0, 0, width, int(height * 0.4)))
+        enhanced = ImageOps.autocontrast(cropped)
+
+        text = pytesseract.image_to_string(enhanced)
+        logger.info(f"🔍 OCR brut :\n{text}")
+
+        if "tiktok" in text.lower():
+            reseau = "tiktok"
+        elif "threads" in text.lower():
+            reseau = "threads"
+        elif "twitter" in text.lower():
+            reseau = "twitter"
+        else:
+            reseau = "instagram"
+
+        usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
+        username = usernames[0] if usernames else "Non trouvé"
+        username = corriger_username(username, reseau)
+
+        abonnés = None
+        match = re.search(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(abonnés|followers|suivis|followers|j'aime|likes)", text, re.IGNORECASE)
+        if match:
+            abonnés = match.group(1).replace(",", ".").replace(" ", "")
+        else:
+            logger.warning("⚠️ Aucune donnée d'abonnés trouvée")
+
+        if not username or not abonnés:
+            raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
+
+        if message.message_id in already_processed:
+            logger.info("⚠️ Message déjà traité, on ignore.")
+            return
+        already_processed.add(message.message_id)
+
+        today = datetime.datetime.now().strftime("%d/%m/%Y")
+        row = [today, assistant, reseau, username, abonnés, ""]
+        sheet.append_row(row)
+
+        general_topic_id = 1309
+        msg = f"\ud83e\udd16 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        await bot.send_message(chat_id=GROUP_ID, message_thread_id=general_topic_id, text=msg)
+
+    except Exception as e:
+        logger.exception("❌ Erreur traitement handle_photo")
+        general_topic_id = 1309
+        await bot.send_message(chat_id=GROUP_ID, message_thread_id=general_topic_id, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
 
 # --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
@@ -130,7 +196,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🧹️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🪣️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
