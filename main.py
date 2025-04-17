@@ -109,11 +109,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reseau = "instagram"
 
-        usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
-        username = usernames[0] if usernames else "Non trouvé"
-        username = username.strip().encode("utf-8", "ignore").decode()
-        logger.info(f"🔎 Username avant correction : '{username}' (réseau : {reseau})")
+        usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
+        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
+        username = "Non trouvé"
+        for u in usernames:
+            matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
+            if matches:
+                username = matches[0]
+                break
+        if username == "Non trouvé" and usernames:
+            username = usernames[0]
         username = corriger_username(username, reseau)
+        logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
         abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(followers|abonnés|j'aime|likes)", text, re.IGNORECASE)
