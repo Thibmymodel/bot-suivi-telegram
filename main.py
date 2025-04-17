@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
                 # 📸 Handler images
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-                logger.info("🩹 Handler photo enregistré")
+                logger.info(" 펹 Handler photo enregistré")
 
                 asyncio.create_task(telegram_app.start())
                 logger.info("🚀 Bot Telegram lancé en tâche de fond")
@@ -103,15 +103,15 @@ async def force_webhook():
 # --- ROUTE WEBHOOK ---
 @app.post("/webhook")
 async def webhook(req: Request):
-    logger.info("📩 Webhook reçu → traitement en cours...")
+    logger.info("📬 Webhook reçu → traitement en cours...")
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🔿 Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🕿️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
-        logger.info(f"🧐 Update transformé avec succès → {update}")
+        logger.info(f"😮 Update transformé avec succès → {update}")
         await telegram_app.process_update(update)
         return {"ok": True}
     except Exception as e:
@@ -133,18 +133,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cropped = gray.crop((0, 0, gray.width, int(gray.height * 0.4)))
         upscaled = cropped.resize((cropped.width * 2, cropped.height * 2))
         text = pytesseract.image_to_string(upscaled)
-
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
+
+        if not text.strip():
+            raise ValueError("OCR vide")
 
         # 📅 Extraction date et nom VA depuis le topic
         date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        topic_title = update.message.message_thread_id
         va_name = "GENERAL"
-        if update.message.is_topic_message:
-            chat = await context.bot.get_chat(update.message.chat_id)
-            thread = await chat.get_forum_topic(update.message.message_thread_id)
-            if thread.name.upper().startswith("SUIVI "):
-                va_name = thread.name[6:].strip()
+        if update.message.is_topic_message and update.message.reply_to_message:
+            topic_name = update.message.reply_to_message.forum_topic_created.name
+            if topic_name.upper().startswith("SUIVI "):
+                va_name = topic_name[6:].strip()
 
         # 📢 Message de confirmation dans "Général"
         message = f"🤖 {date} - {va_name} - 1 compte détecté et ajouté ✅"
@@ -154,9 +154,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("❌ Erreur lors du traitement de l'image")
         try:
             date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+            va_name = "GENERAL"
+            if update.message.is_topic_message and update.message.reply_to_message:
+                topic_name = update.message.reply_to_message.forum_topic_created.name
+                if topic_name.upper().startswith("SUIVI "):
+                    va_name = topic_name[6:].strip()
             await context.bot.send_message(
                 chat_id=GROUP_ID,
-                text=f"❌ {date} - Analyse OCR impossible"
+                text=f"❌ {date} - {va_name} - Analyse OCR impossible"
             )
         except Exception:
             logger.warning("❌ Impossible d'envoyer un message d'erreur dans Général")
