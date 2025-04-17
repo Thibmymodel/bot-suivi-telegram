@@ -107,11 +107,11 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📿 Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🔿 Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
-        logger.info(f"🧠 Update transformé avec succès → {update}")
+        logger.info(f"🧐 Update transformé avec succès → {update}")
         await telegram_app.process_update(update)
         return {"ok": True}
     except Exception as e:
@@ -122,6 +122,8 @@ async def webhook(req: Request):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
     try:
+        await asyncio.sleep(120)  # ⏱️ Délai réduit à 2 minutes
+
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
         image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
@@ -134,11 +136,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
 
-        # ✅ Envoi dans le sujet "Général" (hors thread)
+        # 📅 Extraction date et nom VA depuis le topic
         date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        thread_id = update.message.message_thread_id
-        label = f"ID_{thread_id}" if thread_id else "GENERAL"
-        message = f"🧰 {date} – {label} – 1 compte détecté et ajouté ✅"
+        topic_title = update.message.message_thread_id
+        va_name = "GENERAL"
+        if update.message.is_topic_message:
+            chat = await context.bot.get_chat(update.message.chat_id)
+            thread = await chat.get_forum_topic(update.message.message_thread_id)
+            if thread.name.upper().startswith("SUIVI "):
+                va_name = thread.name[6:].strip()
+
+        # 📢 Message de confirmation dans "Général"
+        message = f"🤖 {date} - {va_name} - 1 compte détecté et ajouté ✅"
         await context.bot.send_message(chat_id=GROUP_ID, message_thread_id=None, text=message)
 
     except Exception as e:
@@ -147,7 +156,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
             await context.bot.send_message(
                 chat_id=GROUP_ID,
-                text=f"❌ {date} – Analyse OCR impossible"
+                text=f"❌ {date} - Analyse OCR impossible"
             )
         except Exception:
             logger.warning("❌ Impossible d'envoyer un message d'erreur dans Général")
