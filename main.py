@@ -101,12 +101,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔍 OCR brut :\n{text}")
 
         # --- Détection réseau social ---
-        if any(keyword in text.lower() for keyword in ["tiktok", "studio", "followers", "j'aime"]):
+        if "getallmylinks.com" in text.lower():
+            reseau = "instagram"
+        elif "beacons.ai" in text.lower():
+            reseau = "twitter"
+        elif "tiktok" in text.lower() or any(k in text.lower() for k in ["followers", "j'aime"]):
             reseau = "tiktok"
         elif "threads" in text.lower():
             reseau = "threads"
-        elif "twitter" in text.lower():
-            reseau = "twitter"
         elif any(x in text.lower() for x in ["modifier le profil", "suivi(e)s", "publications"]):
             reseau = "instagram"
         else:
@@ -123,7 +125,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if username == "Non trouvé" and usernames:
             username = usernames[0]
 
-        # Fallback par URL dans le texte
         if username == "Non trouvé":
             urls = re.findall(r"getallmylinks\.com/([a-zA-Z0-9_.]+)", text)
             for u in urls:
@@ -137,7 +138,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        abonnés_match = re.findall(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)\s*(followers|abonn[\u00e9e]s|j'aime|likes)", text, re.IGNORECASE)
+        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(followers|abonn[\u00e9e]s?|j'aime|likes)", text, re.IGNORECASE)
         if abonnés_match:
             abonnés = abonnés_match[0][0].replace(".", "").replace(",", "").replace(" ", "")
         else:
@@ -172,7 +173,7 @@ async def lifespan(app: FastAPI):
                 await telegram_app.initialize()
                 logger.info("✅ Telegram app initialisée")
 
-                telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+                telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.ALL, handle_photo))
                 logger.info("📷 Handler photo enregistré")
 
                 asyncio.create_task(telegram_app.start())
