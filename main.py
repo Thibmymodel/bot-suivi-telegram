@@ -123,9 +123,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(followers|abonnés|j'aime|likes)", text, re.IGNORECASE)
+        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(followers|abonnés|j'aime|likes)", text, re.IGNORECASE)
         if abonnés_match:
-            abonnés = abonnés_match[0][0].replace(",", "").replace(".", "").replace(" ", "")
+            abonnés = abonnés_match[0][0].replace(".", "").replace(",", "").replace(" ", "")
         else:
             logger.warning("⚠️ Aucune donnée d'abonnés trouvée")
 
@@ -204,7 +204,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📃️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📃  Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
