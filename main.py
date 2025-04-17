@@ -108,7 +108,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🗿️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"👿️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -132,6 +132,14 @@ def detect_social_network(text):
         return "twitter"
     return "unknown"
 
+def clean_number(value):
+    value = value.lower().replace(" ", "").replace(",", ".")
+    if 'k' in value:
+        return int(float(value.replace('k', '')) * 1000)
+    if 'm' in value:
+        return int(float(value.replace('m', '')) * 1_000_000)
+    return int(float(value))
+
 # --- HANDLERS ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
@@ -148,11 +156,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_bytes = await photo_file.download_as_bytearray()
         image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
 
-        logger.info("🧪 OCR en cours...")
+        logger.info("🤪 OCR en cours...")
         gray = ImageOps.grayscale(image)
         contrast = ImageEnhance.Contrast(gray).enhance(2.0)
-        top_crop = contrast.crop((0, 0, contrast.width, int(contrast.height * 0.4)))
-        resized = top_crop.resize((top_crop.width * 2, top_crop.height * 2))
+        cropped = contrast.crop((0, 0, contrast.width, int(contrast.height * 0.42)))
+        resized = cropped.resize((cropped.width * 2, cropped.height * 2))
         text = pytesseract.image_to_string(resized)
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
 
@@ -172,22 +180,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_usernames = re.findall(r"@([a-zA-Z0-9_.]{3,30})", text)
         username = all_usernames[0] if all_usernames else None
 
-        followers_match = re.search(r"(\d{1,3}(?:[.,]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+        followers_match = re.search(r"(\d{1,3}(?:[.,\s]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
         if not username or not followers_match:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
-        followers_str = followers_match.group(1).replace(",", ".")
-        if 'k' in followers_str.lower():
-            followers = int(float(followers_str.lower().replace('k', '')) * 1000)
-        elif 'm' in followers_str.lower():
-            followers = int(float(followers_str.lower().replace('m', '')) * 1_000_000)
-        else:
-            followers = int(float(followers_str))
+        followers = clean_number(followers_match.group(1))
 
         sheet.append_row([date, network, va_name, f"@{username}", followers, "="])
         logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
 
-        message = f"🤖 {date} - {va_name} - 1 compte détecté et ajouté ✅"
+        message = f"🧰 {date} - {va_name} - 1 compte détecté et ajouté ✅"
         await context.bot.send_message(chat_id=GROUP_ID, message_thread_id=None, text=message)
 
     except Exception as e:
