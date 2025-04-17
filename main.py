@@ -10,7 +10,7 @@ from PIL import Image, ImageOps
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from telegram import Update, Bot, Message
+from telegram import Update, Bot
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import pytesseract
 import gspread
@@ -53,7 +53,7 @@ logger.info("✅ Connexion Google Sheets réussie")
 # --- DOUBLONS ---
 already_processed = set()
 
-# --- CHARGEMENT DES HANDLES ---
+# --- HANDLES ---
 try:
     with open("known_handles.json", "r", encoding="utf-8") as f:
         KNOWN_HANDLES = json.load(f)
@@ -62,29 +62,22 @@ except Exception as e:
     KNOWN_HANDLES = {}
     logger.warning(f"⚠️ Échec chargement known_handles.json : {e}")
 
-def corriger_username(text: str, reseau: str) -> str:
+def corriger_username(username_ocr: str, reseau: str) -> str:
     handles = KNOWN_HANDLES.get(reseau.lower(), [])
-    for handle in handles:
-        if f"@{handle}".lower() in text.lower():
-            logger.info(f"🔎 Handle exact trouvé dans OCR : @{handle}")
-            return handle
-    # fallback sur approche approximative
-    usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
-    for u in usernames:
-        candidats = get_close_matches(u.lower(), handles, n=1, cutoff=0.85)
-        if candidats:
-            logger.info(f"🔁 Correction OCR : '{u}' → '{candidats[0]}'")
-            return candidats[0]
-    return "Non trouvé"
+    username_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
+    candidats = get_close_matches(username_clean.lower(), handles, n=1, cutoff=0.6)
+    if candidats:
+        logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
+        return candidats[0]
+    return username_ocr
 
-# --- PHOTO HANDLER ---
+# --- HANDLER PHOTO ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message = update.message
         if not message or not message.photo:
             return
 
-        thread_id = message.message_thread_id
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created"):
             return
@@ -106,64 +99,79 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
-        if "getallmylinks.com" in text.lower():
-            reseau = "instagram"
+        # Détection réseau
+        reseau = "instagram"
+        if "threads" in text.lower():
+            reseau = "threads"
         elif "beacons.ai" in text.lower():
             reseau = "twitter"
-        elif "tiktok" in text.lower() or any(k in text.lower() for k in ["followers", "j'aime"]):
+        elif "tiktok" in text.lower() or "j'aime" in text.lower():
             reseau = "tiktok"
-        elif "threads" in text.lower():
-            reseau = "threads"
-        elif any(x in text.lower() for x in ["modifier le profil", "suivi(e)s", "publications"]):
-            reseau = "instagram"
-        else:
-            reseau = "instagram"
 
-        username = corriger_username(text, reseau)
+        usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
+        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
+        username = "Non trouvé"
+
+        for u in usernames:
+            if u.lower() in reseau_handles:
+                username = u
+                logger.info(f"🔎 Handle exact trouvé dans OCR : @{username}")
+                break
+
         if username == "Non trouvé":
-            raise ValueError("Nom d'utilisateur non trouvé avec OCR")
+            for u in usernames:
+                correction = corriger_username(u, reseau)
+                if correction.lower() in reseau_handles:
+                    username = correction
+                    break
 
-        logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
+        if username == "Non trouvé":
+            raise ValueError("Nom d'utilisateur introuvable dans l'OCR")
 
         abonnés = None
-        text_clean = text.replace("\n", " ")
+        texte_nettoye = text.replace("\n", " ").replace(" ", " ")
 
-        triplet_regex = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
-        triplet_match = triplet_regex.search(text_clean)
-        if triplet_match:
-            candidates = [triplet_match.group(i).replace(" ", "").replace(",", "").replace(".", "") for i in range(1, 4)]
-            label_match = re.search(r"publications\s+followers\s+suivi\(e\)s", text_clean, re.IGNORECASE)
-            if label_match:
-                abonnés = candidates[1]
-
-        if not abonnés:
-            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
-            match = pattern_stats.search(text_clean)
+        if reseau == "tiktok":
+            match = re.search(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)", texte_nettoye)
+            if match:
+                abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
+        else:
+            match = re.search(r"(\d{1,3}(?:[ .,]\d{3})*)\s*(followers|abonn[ée]s?)", texte_nettoye, re.IGNORECASE)
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
 
-        if not username or not abonnés:
+        if not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
         if message.message_id in already_processed:
-            logger.info("⚠️ Message déjà traité, on ignore.")
+            logger.info("⚠️ Message déjà traité")
             return
         already_processed.add(message.message_id)
 
         today = datetime.datetime.now().strftime("%d/%m/%Y")
-        row = [today, assistant, reseau, f"@{username}", abonnés, ""]
-        sheet.append_row(row)
+        sheet.append_row([today, assistant, reseau, f"@{username}", abonnés, ""])
 
-        await bot.send_message(
-            chat_id=GROUP_ID,
-            text=f"🤬 {today} - {assistant} - 1 compte détecté et ajouté ✅"
-        )
+        key = f"{today}_{assistant}"
+        if not hasattr(context.bot_data, "confirmation_tracker"):
+            context.bot_data["confirmation_tracker"] = {}
+        if key not in context.bot_data["confirmation_tracker"]:
+            context.bot_data["confirmation_tracker"][key] = 0
+        context.bot_data["confirmation_tracker"][key] += 1
+
+        count = context.bot_data["confirmation_tracker"][key]
+        if count > 1:
+            return  # On attend la fin pour envoyer une confirmation globale
+
+        await asyncio.sleep(10)
+        total = context.bot_data["confirmation_tracker"].pop(key, 0)
+        if total > 0:
+            await bot.send_message(chat_id=GROUP_ID, text=f"🤖 {today} - {assistant} - {total} compte{'s' if total > 1 else ''} détecté{'s' if total > 1 else ''} et ajouté{'s' if total > 1 else ''} ✅")
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
         await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
 
-# --- FASTAPI + LIFESPAN ---
+# --- FASTAPI ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     def runner():
@@ -189,20 +197,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
 
-@app.get("/")
-async def root():
-    logger.info("📱 Ping reçu sur /")
-    return {"status": "Bot opérationnel"}
-
 @app.post("/webhook")
-async def telegram_webhook(request: Request):
+async def webhook(req: Request):
     logger.info("📨 Webhook reçu → traitement en cours...")
     try:
         await telegram_ready.wait()
-        update_data = await request.json()
-        update = Update.de_json(update_data, bot)
+        raw = await req.body()
+        update_dict = json.loads(raw)
+        update = Update.de_json(update_dict, bot)
         await telegram_app.process_update(update)
-        return JSONResponse(content={"ok": True})
+        return {"ok": True}
     except Exception as e:
-        logger.exception("❌ Erreur traitement /webhook")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.exception("❌ Erreur route /webhook")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
