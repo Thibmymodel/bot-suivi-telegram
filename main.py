@@ -100,14 +100,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
-        if "tiktok" in text.lower():
+        reseau = "instagram"
+        lower_text = text.lower()
+        if any(keyword in lower_text for keyword in ["tiktok", "studio", "followers", "j'aime"]):
             reseau = "tiktok"
-        elif "threads" in text.lower():
+        elif "threads" in lower_text:
             reseau = "threads"
-        elif "twitter" in text.lower():
+        elif "twitter" in lower_text:
             reseau = "twitter"
-        else:
-            reseau = "instagram"
 
         usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
         username = usernames[0] if usernames else "Non trouvé"
@@ -116,7 +116,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = corriger_username(username, reseau)
 
         abonnés = None
-        match = re.search(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(abonnés|followers|suivis|followers|j'aime|likes)", text, re.IGNORECASE)
+        match = re.search(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(abonnés|followers|suivis|j'aime|likes)", text, re.IGNORECASE)
         if match:
             abonnés = match.group(1).replace(",", ".").replace(" ", "")
         else:
@@ -197,7 +197,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📃️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📃  Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
