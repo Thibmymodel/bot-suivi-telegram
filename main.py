@@ -131,14 +131,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, username, abonnés, ""]
         sheet.append_row(row)
 
-        general_topic_id = 1309
         msg = f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
-        await bot.send_message(chat_id=GROUP_ID, message_thread_id=general_topic_id, text=msg)
+        await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
-        general_topic_id = 1309
-        await bot.send_message(chat_id=GROUP_ID, message_thread_id=general_topic_id, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
+        await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
 
 # --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
@@ -196,7 +194,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🪣️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🧳️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
