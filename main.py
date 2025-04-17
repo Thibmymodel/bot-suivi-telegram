@@ -130,7 +130,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info("🧪 OCR en cours...")
         gray = ImageOps.grayscale(image)
-        cropped = gray.crop((0, 0, gray.width, int(gray.height * 0.4)))
+        cropped = gray.crop((0, 0, gray.width, int(gray.height * 0.3)))
         upscaled = cropped.resize((cropped.width * 2, cropped.height * 2))
         text = pytesseract.image_to_string(upscaled)
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
@@ -145,15 +145,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if topic_name.upper().startswith("SUIVI "):
                 va_name = topic_name[6:].strip()
 
-        username_match = re.search(r"@([a-zA-Z0-9_.]+)", text)
-        followers_match = re.search(r"([\d.,]+)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+        all_usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
+        username = all_usernames[0] if all_usernames else None
 
-        if not username_match or not followers_match:
+        followers_match = re.search(r"([\d.,]+)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+        if not username or not followers_match:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
-        username = username_match.group(1)
         followers_str = followers_match.group(1).replace(",", ".")
-
         if 'k' in followers_str.lower():
             followers = int(float(followers_str.lower().replace('k', '')) * 1000)
         elif 'm' in followers_str.lower():
