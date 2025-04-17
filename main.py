@@ -5,7 +5,7 @@ import json
 import shutil
 import logging
 import datetime
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -108,7 +108,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"👿️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"👾️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -158,8 +158,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info("🤪 OCR en cours...")
         gray = ImageOps.grayscale(image)
-        contrast = ImageEnhance.Contrast(gray).enhance(2.0)
-        cropped = contrast.crop((0, 0, contrast.width, int(contrast.height * 0.42)))
+        contrast = ImageEnhance.Contrast(gray).enhance(2.5)
+        sharpened = contrast.filter(ImageFilter.SHARPEN)
+        cropped = sharpened.crop((0, 0, sharpened.width, int(sharpened.height * 0.42)))
         resized = cropped.resize((cropped.width * 2, cropped.height * 2))
         text = pytesseract.image_to_string(resized)
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
