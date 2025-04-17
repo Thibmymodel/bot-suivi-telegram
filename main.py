@@ -138,13 +138,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        lines = text.splitlines()
-        for i, line in enumerate(lines):
-            nombre_match = re.search(r"(\d{1,3}(?:[.,]\d{3})*|\d+)", line)
-            if nombre_match:
-                suivant = lines[i+1] if i+1 < len(lines) else ""
-                if re.search(r"followers|abonn[ée]s?|j'aime|likes", line, re.IGNORECASE) or re.search(r"followers|abonn[ée]s?|j'aime|likes", suivant, re.IGNORECASE):
-                    abonnés = nombre_match.group(1).replace(".", "").replace(",", "").replace(" ", "")
+        lignes = text.splitlines()
+        for i in range(len(lignes)):
+            ligne = lignes[i]
+            suivant = lignes[i + 1] if i + 1 < len(lignes) else ""
+            if re.search(r"followers|abonn[ée]s?|j'aime|likes", ligne, re.IGNORECASE) or re.search(r"followers|abonn[ée]s?|j'aime|likes", suivant, re.IGNORECASE):
+                match = re.search(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)", ligne)
+                if not match:
+                    match = re.search(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)", suivant)
+                if match:
+                    abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
                     break
 
         if not username or not abonnés:
@@ -159,7 +162,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        msg = f"🪰 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        msg = f"🦠 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
