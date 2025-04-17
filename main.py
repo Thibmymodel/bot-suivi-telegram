@@ -140,12 +140,11 @@ def clean_number(value):
         return int(float(value.replace('m', '')) * 1_000_000)
     return int(float(value))
 
-# --- HANDLERS ---
+# --- HANDLER PHOTO ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
     try:
         await asyncio.sleep(120)
-
         message_id = update.message.message_id
         if message_id in already_processed:
             logger.info(f"⏰ Message {message_id} déjà traité. Ignoré.")
@@ -184,23 +183,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"👀 OCR username détecté : {username if username else 'Non trouvé'}")
 
         followers = None
-        followers_match = re.search(r"(\d{1,3}(?:[.,\s]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+        followers_match = re.search(r"(\d{3,5})\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
 
         if not followers_match:
             logger.warning("🔍 Recherche secondaire pour les abonnés...")
-            match = re.findall(r"\b(\d{1,3}(?:[.,\s]\d{1,3})*)\b", text)
-            for number in match:
-                if "followers" in text.lower() or "abonnés" in text.lower():
-                    followers = clean_number(number)
-                    break
+            numbers = re.findall(r"\b(\d{2,5})\b", text)
+            logger.info(f"🔎 Nombres trouvés : {numbers}")
+            plausible = [int(n) for n in numbers if 100 <= int(n) <= 20000]
+            if plausible:
+                followers = plausible[0]
         else:
             followers = clean_number(followers_match.group(1))
 
         if not username or followers is None:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
-
-        if 'followers' not in text.lower() and 'abonn' not in text.lower():
-            raise ValueError("Mention abonnés absente")
 
         logger.warning(f"👀 OCR abonnés détecté : {followers}")
 
