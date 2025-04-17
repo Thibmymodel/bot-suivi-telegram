@@ -166,9 +166,41 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message_counter[(today, assistant)] += 1
 
-        count = message_counter[(today, assistant)]
-        await bot.send_message(chat_id=GROUP_ID, text=f"🤖 {today} - {assistant} - {count} compte{'s' if count > 1 else ''} détecté et ajouté ✅")
-
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
         await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await telegram_app.initialize()
+    telegram_app.create_task(telegram_app.start())
+    telegram_ready.set()
+    yield
+    await telegram_app.stop()
+
+app = FastAPI(lifespan=lifespan)
+
+@telegram_app.message_handler(filters.PHOTO)
+async def photo_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_photo(update, context)
+
+@telegram_app.on_stop
+async def stop_bot():
+    logger.info("⏹️ Arrêt du bot Telegram")
+
+@telegram_app.on_start
+async def start_bot(_: Application):
+    logger.info("🚀 Bot Telegram lancé en tâche de fond")
+
+@telegram_app.post_init
+async def post_init(_: Application):
+    await bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
+    logger.info(f"🔗 Webhook enregistré → {RAILWAY_URL}/webhook")
+
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    body = await req.body()
+    logger.info(f"📥 Webhook reçu → traitement en cours...")
+    await telegram_ready.wait()
+    await telegram_app.update_queue.put(Update.de_json(json.loads(body), bot))
+    return JSONResponse(content={"status": "ok"})
