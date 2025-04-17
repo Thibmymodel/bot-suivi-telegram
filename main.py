@@ -141,16 +141,31 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         abonnés = None
         if reseau == "instagram":
-            pattern_three_numbers = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
-            match = pattern_three_numbers.search(text.replace("\n", " "))
+            pattern = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
+            match = pattern.search(text.replace("\n", " "))
             if match:
                 abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
 
         if not abonnés:
-            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[\u00e9e]s?|j'aime|likes))", re.IGNORECASE)
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
             match = pattern_stats.search(text.replace("\n", " "))
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
+
+        if abonnés and int(abonnés) > 1000000:
+            abonnés = abonnés[-6:]
+            if len(abonnés) > 4:
+                abonnés = abonnés[-3:]
+
+        if not abonnés:
+            # Fallback : on récupère le nombre entre le mot "followers" et "suivi(e)s"
+            text_clean = text.replace("\n", " ").lower()
+            parts = re.split(r"followers|abonn[ée]s", text_clean)
+            if len(parts) > 1:
+                after = parts[1]
+                number_match = re.search(r"\d{1,3}(?:[ .,]\d{3})*", after)
+                if number_match:
+                    abonnés = number_match.group(0).replace(" ", "").replace(".", "").replace(",", "")
 
         if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
@@ -166,17 +181,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message_counter[(today, assistant)] += 1
 
-        # --- Message dans GENERAL ---
         topic_list = await bot.get_forum_topic_list(chat_id=GROUP_ID)
         general_topic = next((t for t in topic_list if t.name.lower() == "général"), None)
         if general_topic:
             count = message_counter[(today, assistant)]
-            emoji = "🤖"
             suffix = "compte détecté et ajouté ✅" if count == 1 else "comptes détectés et ajoutés ✅"
             await bot.send_message(
                 chat_id=GROUP_ID,
                 message_thread_id=general_topic.message_thread_id,
-                text=f"{emoji} {today} – {assistant} – {count} {suffix}"
+                text=f"🤖 {today} – {assistant} – {count} {suffix}"
             )
 
     except Exception as e:
