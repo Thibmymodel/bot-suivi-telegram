@@ -158,7 +158,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             abonnés = match.group(2)
 
         if not abonnés:
-            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[\u00e9e]s?|j'aime|likes))", re.IGNORECASE)
             match = pattern_stats.search(text_flat)
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
@@ -170,7 +170,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not abonnés:
             text_clean = text.replace("\n", " ").lower()
-            parts = re.split(r"followers|abonn[ée]s", text_clean)
+            parts = re.split(r"followers|abonn[\u00e9e]s", text_clean)
             if len(parts) > 1:
                 after = parts[1]
                 number_match = re.search(r"\d{1,3}(?:[ .,]\d{3})*", after)
@@ -207,8 +207,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await telegram_app.initialize()
     telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    await telegram_app.initialize()
     telegram_app.create_task(telegram_app.start())
     telegram_ready.set()
     yield
