@@ -110,7 +110,7 @@ async def webhook(req: Request):
         raw = await req.body()
         logger.info(f"👾️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
-        logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
+        logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
         logger.info(f"😮 Update transformé avec succès → {update}")
         await telegram_app.process_update(update)
@@ -157,7 +157,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_bytes = await photo_file.download_as_bytearray()
         image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
 
-        logger.info("🤪 OCR en cours...")
+        logger.info("🢫 OCR en cours...")
         gray = ImageOps.grayscale(image)
         contrast = ImageEnhance.Contrast(gray).enhance(2.5)
         sharpened = contrast.filter(ImageFilter.SHARPEN)
@@ -183,6 +183,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = all_usernames[0] if all_usernames else None
         logger.warning(f"👀 OCR username détecté : {username if username else 'Non trouvé'}")
 
+        followers = None
         followers_match = re.search(r"(\d{1,3}(?:[.,\s]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
 
         if not followers_match:
@@ -190,18 +191,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             match = re.findall(r"\b(\d{1,3}(?:[.,\s]\d{1,3})*)\b", text)
             for number in match:
                 if "followers" in text.lower() or "abonnés" in text.lower():
-                    followers_match = re.match(r".*", number)  # Mock pour l'utiliser ensuite
                     followers = clean_number(number)
                     break
+        else:
+            followers = clean_number(followers_match.group(1))
 
-        if not username or not followers_match:
-            logger.warning(f"👀 OCR abonnés détecté : Non trouvé")
+        if not username or followers is None:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
         if 'followers' not in text.lower() and 'abonn' not in text.lower():
             raise ValueError("Mention abonnés absente")
 
-        followers = clean_number(followers_match.group(1))
         logger.warning(f"👀 OCR abonnés détecté : {followers}")
 
         sheet.append_row([date, network, va_name, f"@{username}", followers, "="])
