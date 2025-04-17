@@ -70,6 +70,10 @@ def corriger_username(username_ocr: str, reseau: str) -> str:
         return candidats[0]
     return username_ocr
 
+# --- HANDLER PHOTO (à compléter plus tard) ---
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass  # Placeholder pour éviter l'erreur de référence
+
 # --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
