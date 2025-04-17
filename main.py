@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
                 # 📸 Handler images
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-                logger.info(" 펹 Handler photo enregistré")
+                logger.info("📷 Handler photo enregistré")
 
                 asyncio.create_task(telegram_app.start())
                 logger.info("🚀 Bot Telegram lancé en tâche de fond")
@@ -107,7 +107,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🕿️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🔿️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -122,7 +122,7 @@ async def webhook(req: Request):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
     try:
-        await asyncio.sleep(120)  # ⏱️ Délai réduit à 2 minutes
+        await asyncio.sleep(120)
 
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
@@ -138,7 +138,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text.strip():
             raise ValueError("OCR vide")
 
-        # 📅 Extraction date et nom VA depuis le topic
         date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
         va_name = "GENERAL"
         if update.message.is_topic_message and update.message.reply_to_message:
@@ -146,7 +145,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if topic_name.upper().startswith("SUIVI "):
                 va_name = topic_name[6:].strip()
 
-        # 📢 Message de confirmation dans "Général"
+        username_match = re.search(r"@([a-zA-Z0-9_.]+)", text)
+        followers_match = re.search(r"([\d.,]+)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+
+        if not username_match or not followers_match:
+            raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
+
+        username = username_match.group(1)
+        followers_str = followers_match.group(1).replace(",", ".")
+
+        if 'k' in followers_str.lower():
+            followers = int(float(followers_str.lower().replace('k', '')) * 1000)
+        elif 'm' in followers_str.lower():
+            followers = int(float(followers_str.lower().replace('m', '')) * 1_000_000)
+        else:
+            followers = int(float(followers_str))
+
+        sheet.append_row([date, "", va_name, f"@{username}", followers, "="])
+        logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
+
         message = f"🤖 {date} - {va_name} - 1 compte détecté et ajouté ✅"
         await context.bot.send_message(chat_id=GROUP_ID, message_thread_id=None, text=message)
 
