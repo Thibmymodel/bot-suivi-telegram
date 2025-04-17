@@ -49,6 +49,9 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
 
+# --- DOUBLONS ---
+already_processed = set()
+
 # --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -134,6 +137,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
     try:
         await asyncio.sleep(120)
+
+        message_id = update.message.message_id
+        if message_id in already_processed:
+            logger.info(f"⏰ Message {message_id} déjà traité. Ignoré.")
+            return
+        already_processed.add(message_id)
 
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
