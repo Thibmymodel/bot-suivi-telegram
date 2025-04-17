@@ -138,7 +138,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        pattern_stats = re.compile(r"(\d{1,3}[.,\s]?\d{3}|\d+)[^\d]+(followers|abonn[ée]s?|j'aime|likes)", re.IGNORECASE)
+        pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
         match = pattern_stats.search(text.replace("\n", " "))
         if match:
             abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
