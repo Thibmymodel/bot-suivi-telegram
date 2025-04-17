@@ -5,7 +5,7 @@ import json
 import shutil
 import logging
 import datetime
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
                 await telegram_app.initialize()
                 logger.info("✅ Telegram app initialisée")
 
-                # 📸 Handler images
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
                 logger.info("📷 Handler photo enregistré")
 
@@ -100,14 +99,13 @@ async def force_webhook():
         logger.error(f"❌ Erreur lors du reset webhook : {e}")
         return {"error": str(e)}
 
-# --- ROUTE WEBHOOK ---
 @app.post("/webhook")
 async def webhook(req: Request):
     logger.info("📬 Webhook reçu → traitement en cours...")
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🔿️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🗿️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📨 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -143,7 +141,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info("🧪 OCR en cours...")
         gray = ImageOps.grayscale(image)
-        top_crop = gray.crop((0, 0, gray.width, int(gray.height * 0.4)))
+        contrast = ImageEnhance.Contrast(gray).enhance(2.0)
+        top_crop = contrast.crop((0, 0, contrast.width, int(contrast.height * 0.4)))
         resized = top_crop.resize((top_crop.width * 2, top_crop.height * 2))
         text = pytesseract.image_to_string(resized)
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
@@ -161,10 +160,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if topic_name.upper().startswith("SUIVI "):
                 va_name = topic_name[6:].strip()
 
-        all_usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
+        all_usernames = re.findall(r"@([a-zA-Z0-9_.]{3,30})", text)
         username = all_usernames[0] if all_usernames else None
 
-        followers_match = re.search(r"([\d.,]+)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+        followers_match = re.search(r"(\d{1,3}(?:[.,]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
         if not username or not followers_match:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
