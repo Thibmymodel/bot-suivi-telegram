@@ -64,7 +64,8 @@ except Exception as e:
 
 def corriger_username(username_ocr: str, reseau: str) -> str:
     handles = KNOWN_HANDLES.get(reseau.lower(), [])
-    candidats = get_close_matches(username_ocr.lower(), handles, n=1, cutoff=0.7)
+    username_ocr_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
+    candidats = get_close_matches(username_ocr_clean.lower(), handles, n=1, cutoff=0.6)
     if candidats:
         logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
         return candidats[0]
@@ -110,6 +111,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
         username = usernames[0] if usernames else "Non trouvé"
+        username = username.strip().encode("utf-8", "ignore").decode()
+        logger.info(f"🔎 Username avant correction : '{username}' (réseau : {reseau})")
         username = corriger_username(username, reseau)
 
         abonnés = None
@@ -194,7 +197,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"🧳️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📃️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
