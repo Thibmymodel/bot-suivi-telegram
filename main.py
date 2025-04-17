@@ -72,6 +72,18 @@ def corriger_username(username_ocr: str, reseau: str) -> str:
         return candidats[0]
     return username_ocr
 
+async def get_general_topic_id(bot: Bot) -> int:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getForumTopicList"
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json={"chat_id": GROUP_ID})
+        data = response.json()
+        if data.get("ok"):
+            topics = data["result"].get("topics", [])
+            for topic in topics:
+                if topic.get("name", "").lower() == "général":
+                    return topic["message_thread_id"]
+    return None
+
 # --- HANDLER PHOTO ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -180,14 +192,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message_counter[(today, assistant)] += 1
 
-        topic_list = await context.bot.get_forum_topic_list(chat_id=GROUP_ID)
-        general_topic = next((t for t in topic_list if t.name.lower() == "général"), None)
-        if general_topic:
+        general_thread_id = await get_general_topic_id(bot)
+        if general_thread_id:
             count = message_counter[(today, assistant)]
             suffix = "compte détecté et ajouté ✅" if count == 1 else "comptes détectés et ajoutés ✅"
             await bot.send_message(
                 chat_id=GROUP_ID,
-                message_thread_id=general_topic.message_thread_id,
+                message_thread_id=general_thread_id,
                 text=f"🤖 {today} – {assistant} – {count} {suffix}"
             )
 
