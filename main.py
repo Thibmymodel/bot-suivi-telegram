@@ -156,7 +156,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_bytes = await photo_file.download_as_bytearray()
         image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
 
-        logger.info("🢫 OCR en cours...")
+        logger.info("🦫 OCR en cours...")
         gray = ImageOps.grayscale(image)
         contrast = ImageEnhance.Contrast(gray).enhance(2.5)
         sharpened = contrast.filter(ImageFilter.SHARPEN)
@@ -200,7 +200,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.warning(f"👀 OCR abonnés détecté : {followers}")
 
-        sheet.append_row([date, network, va_name, f"@{username}", followers, "="])
+        sheet.append_row([date, va_name, network, f"@{username}", followers, "="])
         logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
 
         message = f"🧰 {date} - {va_name} - 1 compte détecté et ajouté ✅"
