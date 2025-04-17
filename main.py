@@ -181,19 +181,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@telegram_app.on_stop
-async def stop_bot():
-    logger.info("⏹️ Arrêt du bot Telegram")
-
-@telegram_app.on_start
-async def start_bot(_: Application):
-    logger.info("🚀 Bot Telegram lancé en tâche de fond")
-
-@telegram_app.post_init
-async def post_init(_: Application):
-    await bot.set_webhook(url=f"{RAILWAY_URL}/webhook")
-    logger.info(f"🔗 Webhook enregistré → {RAILWAY_URL}/webhook")
-
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     body = await req.body()
