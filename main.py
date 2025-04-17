@@ -100,14 +100,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
-        reseau = "instagram"
-        lower_text = text.lower()
-        if any(keyword in lower_text for keyword in ["tiktok", "studio", "followers", "j'aime"]):
+        if any(keyword in text.lower() for keyword in ["tiktok", "studio", "followers", "j'aime"]):
             reseau = "tiktok"
-        elif "threads" in lower_text:
+        elif "threads" in text.lower():
             reseau = "threads"
-        elif "twitter" in lower_text:
+        elif "twitter" in text.lower():
             reseau = "twitter"
+        else:
+            reseau = "instagram"
 
         usernames = re.findall(r"@([a-zA-Z0-9_.]+)", text)
         username = usernames[0] if usernames else "Non trouvé"
@@ -116,9 +116,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = corriger_username(username, reseau)
 
         abonnés = None
-        match = re.search(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(abonnés|followers|suivis|j'aime|likes)", text, re.IGNORECASE)
-        if match:
-            abonnés = match.group(1).replace(",", ".").replace(" ", "")
+        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,3})?)\s*(followers|abonnés|j'aime|likes)", text, re.IGNORECASE)
+        if abonnés_match:
+            abonnés = abonnés_match[0][0].replace(",", "").replace(".", "").replace(" ", "")
         else:
             logger.warning("⚠️ Aucune donnée d'abonnés trouvée")
 
@@ -131,10 +131,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         already_processed.add(message.message_id)
 
         today = datetime.datetime.now().strftime("%d/%m/%Y")
-        row = [today, assistant, reseau, username, abonnés, ""]
+        row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        msg = f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        msg = f"🧰 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
@@ -197,7 +197,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📃  Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📃️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
