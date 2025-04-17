@@ -138,17 +138,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        lignes = text.splitlines()
-        for i in range(len(lignes)):
-            ligne = lignes[i]
-            suivant = lignes[i + 1] if i + 1 < len(lignes) else ""
-            if re.search(r"followers|abonn[ée]s?|j'aime|likes", ligne, re.IGNORECASE) or re.search(r"followers|abonn[ée]s?|j'aime|likes", suivant, re.IGNORECASE):
-                match = re.search(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)", ligne)
-                if not match:
-                    match = re.search(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)", suivant)
-                if match:
-                    abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
-                    break
+        pattern_stats = re.compile(r"(\d{1,3}[.,\s]?\d{3}|\d+)[^\d]+(followers|abonn[ée]s?|j'aime|likes)", re.IGNORECASE)
+        match = pattern_stats.search(text.replace("\n", " "))
+        if match:
+            abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
 
         if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
