@@ -173,16 +173,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await telegram_app.initialize()
+    telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     telegram_app.create_task(telegram_app.start())
     telegram_ready.set()
     yield
     await telegram_app.stop()
 
 app = FastAPI(lifespan=lifespan)
-
-@telegram_app.message_handler(filters.PHOTO)
-async def photo_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await handle_photo(update, context)
 
 @telegram_app.on_stop
 async def stop_bot():
