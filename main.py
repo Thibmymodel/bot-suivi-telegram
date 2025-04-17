@@ -133,7 +133,7 @@ def detect_social_network(text):
     return "unknown"
 
 def clean_number(value):
-    value = value.lower().replace(" ", "").replace(",", ".")
+    value = value.lower().replace(" ","").replace(",", ".")
     if 'k' in value:
         return int(float(value.replace('k', '')) * 1000)
     if 'm' in value:
@@ -182,6 +182,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = all_usernames[0] if all_usernames else None
 
         followers_match = re.search(r"(\d{1,3}(?:[.,\s]\d{1,3})*)\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
+
+        logger.warning(f"👀 OCR username détecté : {username}")
+        logger.warning(f"👀 OCR abonnés détecté : {followers_match.group(1) if followers_match else 'Non trouvé'}")
+
         if not username or not followers_match:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
