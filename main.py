@@ -5,6 +5,7 @@ import json
 import shutil
 import logging
 import datetime
+from difflib import get_close_matches
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -51,6 +52,23 @@ logger.info("✅ Connexion Google Sheets réussie")
 
 # --- DOUBLONS ---
 already_processed = set()
+
+# --- CHARGEMENT DES HANDLES ---
+try:
+    with open("known_handles.json", "r", encoding="utf-8") as f:
+        KNOWN_HANDLES = json.load(f)
+    logger.info("📂 known_handles.json chargé avec succès")
+except Exception as e:
+    KNOWN_HANDLES = {}
+    logger.warning(f"⚠️ Échec chargement known_handles.json : {e}")
+
+def corriger_username(username_ocr: str, reseau: str) -> str:
+    handles = KNOWN_HANDLES.get(reseau.lower(), [])
+    candidats = get_close_matches(username_ocr.lower(), handles, n=1, cutoff=0.7)
+    if candidats:
+        logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
+        return candidats[0]
+    return username_ocr
 
 # --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
@@ -108,7 +126,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"👾️ Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"🧹️ Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
@@ -118,106 +136,3 @@ async def webhook(req: Request):
     except Exception as e:
         logger.exception("❌ Erreur route /webhook")
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
-
-# --- OCR UTILS ---
-def detect_social_network(text):
-    text = text.lower()
-    if "followers" in text and "suivis" in text:
-        return "tiktok"
-    elif "publications" in text and "abonnés" in text:
-        return "instagram"
-    elif "threads" in text:
-        return "threads"
-    elif "abonnements" in text and "abonnés" in text:
-        return "twitter"
-    return "unknown"
-
-def clean_number(value):
-    value = value.lower().replace(" ", "").replace(",", ".")
-    if 'k' in value:
-        return int(float(value.replace('k', '')) * 1000)
-    if 'm' in value:
-        return int(float(value.replace('m', '')) * 1_000_000)
-    return int(float(value))
-
-# --- HANDLER PHOTO ---
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("📷 Image reçue ! Tentative de téléchargement...")
-    try:
-        await asyncio.sleep(120)
-        message_id = update.message.message_id
-        if message_id in already_processed:
-            logger.info(f"⏰ Message {message_id} déjà traité. Ignoré.")
-            return
-        already_processed.add(message_id)
-        logger.info(f"📌 Nouveau message ID ajouté aux traités : {message_id}")
-
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
-
-        logger.info("🦫 OCR en cours...")
-        gray = ImageOps.grayscale(image)
-        contrast = ImageEnhance.Contrast(gray).enhance(2.5)
-        sharpened = contrast.filter(ImageFilter.SHARPEN)
-        cropped = sharpened.crop((0, 0, sharpened.width, int(sharpened.height * 0.42)))
-        resized = cropped.resize((cropped.width * 2, cropped.height * 2))
-        text = pytesseract.image_to_string(resized)
-        logger.info(f"🔍 Résultat OCR brut :\n{text}")
-
-        if not text.strip():
-            raise ValueError("OCR vide")
-
-        network = detect_social_network(text)
-        logger.info(f"🌐 Réseau détecté : {network}")
-
-        date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        va_name = "GENERAL"
-        if update.message.is_topic_message and update.message.reply_to_message:
-            topic_name = update.message.reply_to_message.forum_topic_created.name
-            if topic_name.upper().startswith("SUIVI "):
-                va_name = topic_name[6:].strip()
-
-        all_usernames = re.findall(r"@([a-zA-Z0-9_.]{3,30})", text)
-        username = all_usernames[0] if all_usernames else None
-        logger.warning(f"👀 OCR username détecté : {username if username else 'Non trouvé'}")
-
-        followers = None
-        followers_match = re.search(r"(\d{3,5})\s*(abonn[ée]s|followers)", text, re.IGNORECASE)
-
-        if not followers_match:
-            logger.warning("🔍 Recherche secondaire pour les abonnés...")
-            numbers = re.findall(r"\b(\d{2,5})\b", text)
-            logger.info(f"🔎 Nombres trouvés : {numbers}")
-            plausible = [int(n) for n in numbers if 100 <= int(n) <= 20000]
-            if plausible:
-                followers = plausible[0]
-        else:
-            followers = clean_number(followers_match.group(1))
-
-        if not username or followers is None:
-            raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
-
-        logger.warning(f"👀 OCR abonnés détecté : {followers}")
-
-        sheet.append_row([date, va_name, network, f"@{username}", followers, "="])
-        logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
-
-        message = f"🧰 {date} - {va_name} - 1 compte détecté et ajouté ✅"
-        await context.bot.send_message(chat_id=GROUP_ID, message_thread_id=None, text=message)
-
-    except Exception as e:
-        logger.exception("❌ Erreur lors du traitement de l'image")
-        try:
-            date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-            va_name = "GENERAL"
-            if update.message.is_topic_message and update.message.reply_to_message:
-                topic_name = update.message.reply_to_message.forum_topic_created.name
-                if topic_name.upper().startswith("SUIVI "):
-                    va_name = topic_name[6:].strip()
-            await context.bot.send_message(
-                chat_id=GROUP_ID,
-                text=f"❌ {date} - {va_name} - Analyse OCR impossible"
-            )
-        except Exception:
-            logger.warning("❌ Impossible d'envoyer un message d'erreur dans Général")
