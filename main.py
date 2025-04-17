@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from telegram import Update, Bot
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, ContextTypes, MessageHandler, filters
 import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -35,7 +35,7 @@ logger.info(f"🔑 SPREADSHEET_ID: {SPREADSHEET_ID}")
 
 # --- TELEGRAM ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-bot = telegram_app.bot
+bot: Bot = telegram_app.bot
 telegram_ready = asyncio.Event()
 
 # --- TESSERACT ---
@@ -114,19 +114,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reseau = "instagram"
 
+        # --- Username ---
         usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-        username = None
+        username = "Non trouvé"
         for u in usernames:
             matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
             if matches:
                 username = matches[0]
-                logger.info(f"🔎 Handle exact trouvé dans OCR : @{username}")
                 break
-        if not username and usernames:
+        if username == "Non trouvé" and usernames:
             username = usernames[0]
 
-        if not username:
+        if username == "Non trouvé":
             urls = re.findall(r"getallmylinks\.com/([a-zA-Z0-9_.]+)", text)
             for u in urls:
                 match = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
@@ -135,39 +135,27 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
                 username = u
 
-        if not username:
-            raise ValueError("Nom d'utilisateur introuvable dans l'OCR")
-
         username = corriger_username(username, reseau)
         logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
+        # --- Extraction des abonnés ---
         abonnés = None
-        if reseau == "tiktok":
-            pattern_tiktok_triplet = re.compile(
-                r"(\d{1,3}(?:[ .,]\d{3})*[kK]?)[^\d]{1,10}(\d{1,3}(?:[ .,]\d{3})*[kK]?)[^\d]{1,10}(\d{1,3}(?:[ .,]\d{3})*[kK]?)"
-            )
-            match = pattern_tiktok_triplet.search(text.replace("\n", " "))
-            if match:
-                raw_followers = match.group(2)
-                raw_followers = raw_followers.replace(" ", "").replace(",", ".").lower()
-                if "k" in raw_followers:
-                    abonnés = str(int(float(raw_followers.replace("k", "")) * 1000))
-                else:
-                    abonnés = raw_followers.replace(".", "").replace(",", "")
-        else:
-            pattern_stats = re.compile(
-                r"(\d{1,3}(?:[ .,]\d{3})*[kK]?)(?=\s*(followers|abonn[ée]s?|j'aime|likes))",
-                re.IGNORECASE
-            )
-            match = pattern_stats.search(text.replace("\n", " "))
-            if match:
-                raw_followers = match.group(1).replace(" ", "").replace(",", ".").lower()
-                if "k" in raw_followers:
-                    abonnés = str(int(float(raw_followers.replace("k", "")) * 1000))
-                else:
-                    abonnés = raw_followers.replace(".", "").replace(",", "")
+        cleaned_text = text.replace("\n", " ")
+        triplet_match = re.findall(r"(\d[\d.,]*)", cleaned_text)
 
-        if not abonnés:
+        if reseau == "tiktok" and len(triplet_match) >= 3:
+            abonnés = triplet_match[1]
+        elif reseau == "instagram" and len(triplet_match) >= 3:
+            abonnés = triplet_match[1]
+        else:
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
+            match = pattern_stats.search(cleaned_text)
+            if match:
+                abonnés = match.group(1)
+
+        if abonnés:
+            abonnés = abonnés.replace(" ", "").replace(".", "").replace(",", "")
+        if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
         if message.message_id in already_processed:
@@ -179,14 +167,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        msg = f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        msg = f"🦠 {today} - {assistant} - 1 compte détecté et ajouté ✅"
         await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
         await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
 
-# --- FASTAPI ---
+# --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     def runner():
@@ -210,9 +198,8 @@ async def lifespan(app: FastAPI):
                     logger.info(f"🔗 Webhook enregistré → {res.status_code} | {res.text}")
             except Exception as e:
                 logger.exception("❌ Échec init Telegram")
-        asyncio.run(start())
-    threading.Thread(target=runner, daemon=True).start()
-    yield
+        threading.Thread(target=lambda: asyncio.run(start()), daemon=True).start()
+        yield
 
 app = FastAPI(lifespan=lifespan)
 logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
@@ -221,6 +208,20 @@ logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
 async def root():
     logger.info("📱 Ping reçu sur /")
     return {"status": "Bot opérationnel"}
+
+@app.get("/force-webhook")
+async def force_webhook():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                data={"url": f"{RAILWAY_URL}/webhook"}
+            )
+        logger.info(f"✅ Webhook forcé : {response.text}")
+        return {"webhook_response": response.json()}
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du reset webhook : {e}")
+        return {"error": str(e)}
 
 @app.post("/webhook")
 async def webhook(req: Request):
