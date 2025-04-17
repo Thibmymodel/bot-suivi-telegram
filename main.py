@@ -52,8 +52,6 @@ logger.info("✅ Connexion Google Sheets réussie")
 
 # --- DOUBLONS ---
 already_processed = set()
-message_counter = {}
-message_buffer = {}
 
 # --- CHARGEMENT DES HANDLES ---
 try:
@@ -72,18 +70,6 @@ def corriger_username(username_ocr: str, reseau: str) -> str:
         logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
         return candidats[0]
     return username_ocr
-
-async def get_general_topic_id(bot: Bot) -> int:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getForumTopicList?chat_id={GROUP_ID}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        data = response.json()
-        if data.get("ok"):
-            topics = data["result"].get("topics", [])
-            for topic in topics:
-                if topic.get("name", "").lower() == "général":
-                    return topic["message_thread_id"]
-    return None
 
 # --- PHOTO HANDLER ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,7 +145,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             abonnés = min(map(int, candidats))
 
         if not abonnés:
-            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[éé]s?|j'aime|likes))", re.IGNORECASE)
             match = pattern_stats.search(text_clean)
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
@@ -176,13 +162,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, f"@{username}", abonnés, ""]
         sheet.append_row(row)
 
-        general_id = await get_general_topic_id(bot)
-        if general_id:
-            await bot.send_message(
-                chat_id=GROUP_ID,
-                message_thread_id=general_id,
-                text=f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
-            )
+        await bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        )
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
