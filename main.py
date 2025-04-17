@@ -152,15 +152,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        if reseau == "instagram":
-            pattern = re.compile(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)")
-            match = pattern.search(text.replace("\n", " "))
-            if match:
-                abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
+        text_flat = text.replace("\n", " ")
+        match = re.search(r"\b(\d{1,3})[ .](\d{1,3})[ .](\d{1,3})\b", text_flat)
+        if match:
+            abonnés = match.group(2)
 
         if not abonnés:
             pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
-            match = pattern_stats.search(text.replace("\n", " "))
+            match = pattern_stats.search(text_flat)
             if match:
                 abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
 
@@ -220,7 +219,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     body = await req.body()
-    logger.info(f"📅 Webhook reçu → traitement en cours...")
+    logger.info(f"🗓 Webhook reçu → traitement en cours...")
     await telegram_ready.wait()
     await telegram_app.update_queue.put(Update.de_json(json.loads(body), bot))
     return JSONResponse(content={"status": "ok"})
