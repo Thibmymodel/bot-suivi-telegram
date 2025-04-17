@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from telegram import Update, Bot
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import pytesseract
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -53,7 +53,7 @@ logger.info("✅ Connexion Google Sheets réussie")
 # --- DOUBLONS ---
 already_processed = set()
 
-# --- HANDLES ---
+# --- CHARGEMENT DES HANDLES ---
 try:
     with open("known_handles.json", "r", encoding="utf-8") as f:
         KNOWN_HANDLES = json.load(f)
@@ -64,8 +64,8 @@ except Exception as e:
 
 def corriger_username(username_ocr: str, reseau: str) -> str:
     handles = KNOWN_HANDLES.get(reseau.lower(), [])
-    username_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
-    candidats = get_close_matches(username_clean.lower(), handles, n=1, cutoff=0.6)
+    username_ocr_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
+    candidats = get_close_matches(username_ocr_clean.lower(), handles, n=1, cutoff=0.6)
     if candidats:
         logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
         return candidats[0]
@@ -78,6 +78,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not message or not message.photo:
             return
 
+        thread_id = message.message_thread_id
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created"):
             return
@@ -99,73 +100,87 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
-        # Détection réseau
-        reseau = "instagram"
-        if "threads" in text.lower():
-            reseau = "threads"
+        # --- Détection réseau social ---
+        if "getallmylinks.com" in text.lower():
+            reseau = "instagram"
         elif "beacons.ai" in text.lower():
             reseau = "twitter"
-        elif "tiktok" in text.lower() or "j'aime" in text.lower():
+        elif "tiktok" in text.lower() or any(k in text.lower() for k in ["followers", "j'aime"]):
             reseau = "tiktok"
+        elif "threads" in text.lower():
+            reseau = "threads"
+        elif any(x in text.lower() for x in ["modifier le profil", "suivi(e)s", "publications"]):
+            reseau = "instagram"
+        else:
+            reseau = "instagram"
 
         usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-        username = "Non trouvé"
-
+        username = None
         for u in usernames:
-            if u.lower() in reseau_handles:
-                username = u
+            matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
+            if matches:
+                username = matches[0]
                 logger.info(f"🔎 Handle exact trouvé dans OCR : @{username}")
                 break
+        if not username and usernames:
+            username = usernames[0]
 
-        if username == "Non trouvé":
-            for u in usernames:
-                correction = corriger_username(u, reseau)
-                if correction.lower() in reseau_handles:
-                    username = correction
+        if not username:
+            urls = re.findall(r"getallmylinks\.com/([a-zA-Z0-9_.]+)", text)
+            for u in urls:
+                match = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
+                if match:
+                    username = match[0]
                     break
+                username = u
 
-        if username == "Non trouvé":
+        if not username:
             raise ValueError("Nom d'utilisateur introuvable dans l'OCR")
 
-        abonnés = None
-        texte_nettoye = text.replace("\n", " ").replace(" ", " ")
+        username = corriger_username(username, reseau)
+        logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
+        abonnés = None
         if reseau == "tiktok":
-            match = re.search(r"(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)\s+(\d{1,3}(?:[ .,]\d{3})?)", texte_nettoye)
+            pattern_tiktok_triplet = re.compile(
+                r"(\d{1,3}(?:[ .,]\d{3})*[kK]?)[^\d]{1,10}(\d{1,3}(?:[ .,]\d{3})*[kK]?)[^\d]{1,10}(\d{1,3}(?:[ .,]\d{3})*[kK]?)"
+            )
+            match = pattern_tiktok_triplet.search(text.replace("\n", " "))
             if match:
-                abonnés = match.group(2).replace(" ", "").replace(".", "").replace(",", "")
+                raw_followers = match.group(2)
+                raw_followers = raw_followers.replace(" ", "").replace(",", ".").lower()
+                if "k" in raw_followers:
+                    abonnés = str(int(float(raw_followers.replace("k", "")) * 1000))
+                else:
+                    abonnés = raw_followers.replace(".", "").replace(",", "")
         else:
-            match = re.search(r"(\d{1,3}(?:[ .,]\d{3})*)\s*(followers|abonn[ée]s?)", texte_nettoye, re.IGNORECASE)
+            pattern_stats = re.compile(
+                r"(\d{1,3}(?:[ .,]\d{3})*[kK]?)(?=\s*(followers|abonn[ée]s?|j'aime|likes))",
+                re.IGNORECASE
+            )
+            match = pattern_stats.search(text.replace("\n", " "))
             if match:
-                abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
+                raw_followers = match.group(1).replace(" ", "").replace(",", ".").lower()
+                if "k" in raw_followers:
+                    abonnés = str(int(float(raw_followers.replace("k", "")) * 1000))
+                else:
+                    abonnés = raw_followers.replace(".", "").replace(",", "")
 
         if not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
         if message.message_id in already_processed:
-            logger.info("⚠️ Message déjà traité")
+            logger.info("⚠️ Message déjà traité, on ignore.")
             return
         already_processed.add(message.message_id)
 
         today = datetime.datetime.now().strftime("%d/%m/%Y")
-        sheet.append_row([today, assistant, reseau, f"@{username}", abonnés, ""])
+        row = [today, assistant, reseau, f"@{username}", abonnés, ""]
+        sheet.append_row(row)
 
-        key = f"{today}_{assistant}"
-        if not hasattr(context.bot_data, "confirmation_tracker"):
-            context.bot_data["confirmation_tracker"] = {}
-        if key not in context.bot_data["confirmation_tracker"]:
-            context.bot_data["confirmation_tracker"][key] = 0
-        context.bot_data["confirmation_tracker"][key] += 1
-
-        count = context.bot_data["confirmation_tracker"][key]
-        if count > 1:
-            return  # On attend la fin pour envoyer une confirmation globale
-
-        await asyncio.sleep(10)
-        total = context.bot_data["confirmation_tracker"].pop(key, 0)
-        if total > 0:
-            await bot.send_message(chat_id=GROUP_ID, text=f"🤖 {today} - {assistant} - {total} compte{'s' if total > 1 else ''} détecté{'s' if total > 1 else ''} et ajouté{'s' if total > 1 else ''} ✅")
+        msg = f"🤖 {today} - {assistant} - 1 compte détecté et ajouté ✅"
+        await bot.send_message(chat_id=GROUP_ID, text=msg)
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
@@ -179,8 +194,13 @@ async def lifespan(app: FastAPI):
             try:
                 logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
                 await telegram_app.initialize()
+                logger.info("✅ Telegram app initialisée")
+
                 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+                logger.info("📷 Handler photo enregistré")
+
                 asyncio.create_task(telegram_app.start())
+                logger.info("🚀 Bot Telegram lancé en tâche de fond")
                 telegram_ready.set()
                 async with httpx.AsyncClient() as client:
                     res = await client.post(
@@ -196,6 +216,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
+
+@app.get("/")
+async def root():
+    logger.info("📱 Ping reçu sur /")
+    return {"status": "Bot opérationnel"}
 
 @app.post("/webhook")
 async def webhook(req: Request):
