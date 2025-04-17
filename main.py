@@ -100,12 +100,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
+        # --- Détection réseau social ---
         if any(keyword in text.lower() for keyword in ["tiktok", "studio", "followers", "j'aime"]):
             reseau = "tiktok"
         elif "threads" in text.lower():
             reseau = "threads"
         elif "twitter" in text.lower():
             reseau = "twitter"
+        elif any(x in text.lower() for x in ["modifier le profil", "suivi(e)s", "publications"]):
+            reseau = "instagram"
         else:
             reseau = "instagram"
 
@@ -119,6 +122,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
         if username == "Non trouvé" and usernames:
             username = usernames[0]
+
+        # Fallback par URL dans le texte
+        if username == "Non trouvé":
+            urls = re.findall(r"getallmylinks\.com/([a-zA-Z0-9_.]+)", text)
+            for u in urls:
+                match = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
+                if match:
+                    username = match[0]
+                    break
+                username = u  # dernière chance
+
         username = corriger_username(username, reseau)
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
