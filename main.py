@@ -118,6 +118,19 @@ async def webhook(req: Request):
         logger.exception("❌ Erreur route /webhook")
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
+# --- OCR UTILS ---
+def detect_social_network(text):
+    text = text.lower()
+    if "followers" in text and "suivis" in text:
+        return "tiktok"
+    elif "publications" in text and "abonnés" in text:
+        return "instagram"
+    elif "threads" in text:
+        return "threads"
+    elif "abonnements" in text and "abonnés" in text:
+        return "twitter"
+    return "unknown"
+
 # --- HANDLERS ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("📷 Image reçue ! Tentative de téléchargement...")
@@ -130,13 +143,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info("🧪 OCR en cours...")
         gray = ImageOps.grayscale(image)
-        cropped = gray.crop((0, 0, gray.width, int(gray.height * 0.3)))
-        upscaled = cropped.resize((cropped.width * 2, cropped.height * 2))
-        text = pytesseract.image_to_string(upscaled)
+        top_crop = gray.crop((0, 0, gray.width, int(gray.height * 0.4)))
+        resized = top_crop.resize((top_crop.width * 2, top_crop.height * 2))
+        text = pytesseract.image_to_string(resized)
         logger.info(f"🔍 Résultat OCR brut :\n{text}")
 
         if not text.strip():
             raise ValueError("OCR vide")
+
+        network = detect_social_network(text)
+        logger.info(f"🌐 Réseau détecté : {network}")
 
         date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
         va_name = "GENERAL"
@@ -160,7 +176,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             followers = int(float(followers_str))
 
-        sheet.append_row([date, "", va_name, f"@{username}", followers, "="])
+        sheet.append_row([date, network, va_name, f"@{username}", followers, "="])
         logger.info(f"✅ Données ajoutées à Google Sheet pour @{username} → {followers} abonnés")
 
         message = f"🤖 {date} - {va_name} - 1 compte détecté et ajouté ✅"
