@@ -166,6 +166,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message_counter[(today, assistant)] += 1
 
+        # --- Message dans GENERAL ---
+        topic_list = await bot.get_forum_topic_list(chat_id=GROUP_ID)
+        general_topic = next((t for t in topic_list if t.name.lower() == "général"), None)
+        if general_topic:
+            count = message_counter[(today, assistant)]
+            emoji = "🤖"
+            suffix = "compte détecté et ajouté ✅" if count == 1 else "comptes détectés et ajoutés ✅"
+            await bot.send_message(
+                chat_id=GROUP_ID,
+                message_thread_id=general_topic.message_thread_id,
+                text=f"{emoji} {today} – {assistant} – {count} {suffix}"
+            )
+
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
         await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - Analyse OCR impossible")
