@@ -210,6 +210,7 @@ async def lifespan(app: FastAPI):
     telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     await telegram_app.initialize()
     telegram_app.create_task(telegram_app.start())
+    await bot.set_webhook(f"{RAILWAY_URL}/webhook")
     telegram_ready.set()
     yield
     await telegram_app.stop()
