@@ -131,13 +131,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if match:
                     username = match[0]
                     break
-                username = u  # dernière chance
+                username = u
 
         username = corriger_username(username, reseau)
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        abonnés_match = re.findall(r"(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(followers|abonnés|j'aime|likes)", text, re.IGNORECASE)
+        abonnés_match = re.findall(r"(\d{1,3}(?:[.,\s]\d{3})*|\d+)\s*(followers|abonn[\u00e9e]s|j'aime|likes)", text, re.IGNORECASE)
         if abonnés_match:
             abonnés = abonnés_match[0][0].replace(".", "").replace(",", "").replace(" ", "")
         else:
