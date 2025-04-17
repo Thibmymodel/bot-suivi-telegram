@@ -138,10 +138,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🔎 Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
-        pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
-        match = pattern_stats.search(text.replace("\n", " "))
-        if match:
-            abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
+        numbers = re.findall(r"\b\d{1,3}(?:[ .,]\d{3})*\b", text.replace("\n", " "))
+        if reseau == "instagram" and len(numbers) >= 3:
+            abonnés = numbers[1].replace(" ", "").replace(",", "").replace(".", "")
+        else:
+            pattern_stats = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
+            match = pattern_stats.search(text.replace("\n", " "))
+            if match:
+                abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
 
         if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
@@ -218,7 +222,7 @@ async def webhook(req: Request):
     try:
         await telegram_ready.wait()
         raw = await req.body()
-        logger.info(f"📃  Contenu brut reçu (200c max) : {raw[:200]}")
+        logger.info(f"📓  Contenu brut reçu (200c max) : {raw[:200]}")
         update_dict = json.loads(raw)
         logger.info(f"📸 JSON complet reçu : {json.dumps(update_dict, indent=2)[:1000]}")
         update = Update.de_json(update_dict, bot)
