@@ -19,7 +19,7 @@ import httpx
 import asyncio
 import threading
 
-# --- LOGGING ---
+# --- LOGS ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,13 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 RAILWAY_URL = os.getenv("RAILWAY_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+
 logger.info(f"🔑 BOT_TOKEN: {'PRÉSENT' if BOT_TOKEN else 'ABSENT'}")
 logger.info(f"🔑 RAILWAY_URL: {RAILWAY_URL}")
 logger.info(f"🔑 GROUP_ID: {GROUP_ID}")
 logger.info(f"🔑 SPREADSHEET_ID: {SPREADSHEET_ID}")
 
-# --- TELEGRAM BOT ---
+# --- TELEGRAM ---
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 bot = telegram_app.bot
 telegram_ready = asyncio.Event()
@@ -42,13 +43,16 @@ telegram_ready = asyncio.Event()
 pytesseract.pytesseract.tesseract_cmd = shutil.which("tesseract") or "tesseract"
 logger.info(f"✅ Tesseract détecté : {pytesseract.pytesseract.tesseract_cmd}")
 
-# --- GOOGLE SHEETS ---
+# --- GOOGLE SHEET ---
 creds_dict = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Données Journalières")
 logger.info("✅ Connexion Google Sheets réussie")
+
+# --- DOUBLONS ---
+already_processed = set()
 
 # --- HANDLES ---
 try:
@@ -59,15 +63,13 @@ except Exception as e:
     KNOWN_HANDLES = {}
     logger.warning(f"⚠️ Erreur chargement known_handles.json : {e}")
 
-already_processed = set()
-
 def corriger_username(username_ocr: str, reseau: str) -> str:
     handles = KNOWN_HANDLES.get(reseau.lower(), [])
-    username_clean = username_ocr.strip().lower()
-    match = get_close_matches(username_clean, handles, n=1, cutoff=0.6)
-    if match:
-        logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{match[0]}'")
-        return match[0]
+    username_ocr_clean = username_ocr.strip().encode("utf-8", "ignore").decode()
+    candidats = get_close_matches(username_ocr_clean.lower(), handles, n=1, cutoff=0.6)
+    if candidats:
+        logger.info(f"🔁 Correction OCR : '{username_ocr}' → '{candidats[0]}'")
+        return candidats[0]
     return username_ocr
 
 # --- HANDLER PHOTO ---
@@ -77,7 +79,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not message or not message.photo:
             return
 
-        # 🔄 Récupération du nom de l'assistant depuis le nom du topic Telegram
         thread_id = message.message_thread_id
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created"):
@@ -88,8 +89,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         assistant = topic_name.replace("SUIVI ", "").strip().upper()
-
         photo = message.photo[-1]
+
         file = await bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
         image = Image.open(io.BytesIO(img_bytes))
@@ -100,90 +101,94 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = pytesseract.image_to_string(enhanced)
         logger.info(f"🔍 OCR brut :\n{text}")
 
-        # --- Réseau social ---
+        # Réseau
         if "tiktok" in text.lower() or "followers" in text.lower() or "j'aime" in text.lower():
             reseau = "tiktok"
         elif "threads" in text.lower():
             reseau = "threads"
-        elif "getallmylinks" in text.lower():
+        elif "getallmylinks.com" in text.lower():
             reseau = "instagram"
+        elif "beacons.ai" in text.lower():
+            reseau = "twitter"
         else:
             reseau = "instagram"
 
-        # --- Username ---
         usernames = re.findall(r"@([a-zA-Z0-9_.]{3,})", text)
+        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
         username = "Non trouvé"
         for u in usernames:
-            if u.lower() in KNOWN_HANDLES.get(reseau.lower(), []):
-                username = u
-                logger.info(f"🔎 Handle exact trouvé dans OCR : @{username}")
+            matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.6)
+            if matches:
+                username = matches[0]
                 break
         if username == "Non trouvé" and usernames:
             username = usernames[0]
+
         username = corriger_username(username, reseau)
         logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
-        # --- Followers / Abonnés ---
         abonnés = None
-        chiffres = re.findall(r"\d{1,3}(?:[., ]\d{3})*|\d+[Kk]", text)
-
         if reseau == "tiktok":
-            if len(chiffres) >= 2:
-                abonnés = chiffres[1].replace(",", "").replace(" ", "").replace(".", "")
-                if 'k' in abonnés.lower():
-                    abonnés = int(float(abonnés.lower().replace("k", "")) * 1000)
-        else:
-            # Instagram / Twitter / Threads
-            pattern = re.compile(r"(\d{1,3}(?:[ .,]\d{3})*)(?=\s*(followers|abonn[ée]s?|j'aime|likes))", re.IGNORECASE)
-            match = pattern.search(text.replace("\n", " "))
-            if match:
-                abonnés = match.group(1).replace(" ", "").replace(".", "").replace(",", "")
+            lines = text.lower().split("\n")
+            for i, line in enumerate(lines):
+                if "followers" in line and i > 0:
+                    match = re.search(r"(\d{1,3}(?:[., ]?\d{3})*|\d+[kK])", lines[i - 1])
+                    if match:
+                        abonnés = match.group(1)
+                        break
 
-        if not abonnés or not username:
+            if not abonnés:
+                chiffres = re.findall(r"\d{1,3}(?:[., ]\d{3})*|\d+[kK]", text)
+                if len(chiffres) >= 2:
+                    abonnés = chiffres[1]
+
+            if abonnés:
+                abonnés = abonnés.lower().replace(" ", "").replace(",", "").replace(".", "")
+                if 'k' in abonnés:
+                    abonnés = int(float(abonnés.replace("k", "")) * 1000)
+
+        if not username or not abonnés:
             raise ValueError("Nom d'utilisateur ou abonnés introuvable dans l'OCR")
 
         if message.message_id in already_processed:
-            logger.info("⚠️ Message déjà traité, on ignore.")
+            logger.info("⚠️ Message déjà traité.")
             return
         already_processed.add(message.message_id)
 
-        # --- Google Sheet ---
         today = datetime.datetime.now().strftime("%d/%m/%Y")
-        row = [today, assistant, reseau, f"@{username}", abonnés, ""]
+        row = [today, assistant, reseau, f"@{username}", str(abonnés), ""]
         sheet.append_row(row)
 
-        msg = f"🦠 {today} - {assistant} - 1 compte détecté et ajouté ✅"
-        await bot.send_message(chat_id=GROUP_ID, text=msg)
+        confirmation = f"📊 {today} – @{username} ({reseau}) ajouté par {assistant} ✅"
+        await bot.send_message(chat_id=GROUP_ID, text=confirmation)
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
-        await bot.send_message(chat_id=GROUP_ID, text=f"❌ Analyse OCR impossible")
+        await bot.send_message(chat_id=GROUP_ID, text="❌ OCR impossible sur cette image.")
 
-# --- LIFESPAN ---
+# --- FASTAPI + LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async def start():
-        try:
-            logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
-            await telegram_app.initialize()
-            logger.info("✅ Telegram app initialisée")
-            telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-            await telegram_app.start()
-            telegram_ready.set()
-            logger.info("🚀 Bot Telegram lancé")
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                    data={"url": f"{RAILWAY_URL}/webhook"}
-                )
-                logger.info(f"🔗 Webhook enregistré → {res.status_code} | {res.text}")
-        except Exception as e:
-            logger.exception("❌ Échec init Telegram")
-
-    await start()
+    def runner():
+        async def start():
+            try:
+                logger.info("🚦 Initialisation LIFESPAN → Telegram bot")
+                await telegram_app.initialize()
+                telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+                await telegram_app.start()
+                telegram_ready.set()
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                        data={"url": f"{RAILWAY_URL}/webhook"}
+                    )
+                    logger.info(f"🔗 Webhook enregistré → {res.status_code} | {res.text}")
+            except Exception as e:
+                logger.exception("❌ Échec init Telegram")
+        asyncio.run(start())
+    threading.Thread(target=runner, daemon=True).start()
     yield
 
-# --- FASTAPI APP ---
 app = FastAPI(lifespan=lifespan)
 logger.info("🚀 FastAPI instance déclarée (avec lifespan)")
 
@@ -193,13 +198,11 @@ async def root():
 
 @app.post("/webhook")
 async def webhook(req: Request):
-    logger.info("📨 Webhook reçu → traitement en cours...")
     try:
         await telegram_ready.wait()
-        raw = await req.body()
-        update = Update.de_json(json.loads(raw), bot)
+        update = Update.de_json(await req.json(), bot)
         await telegram_app.process_update(update)
         return {"ok": True}
     except Exception as e:
-        logger.exception("❌ Erreur route /webhook")
-        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+        logger.exception("❌ Erreur traitement webhook")
+        return JSONResponse(status_code=500, content={"error": str(e)})
