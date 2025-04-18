@@ -1,17 +1,47 @@
-# Secrets
+# === 🔒 Fichiers sensibles ===
 config.json
 credentials.json
 result.txt
 service_account.json
+.env
+.env.*
 
-# Python cache
-*.pyc
+# === 🐍 Cache Python ===
+*.py[cod]
 __pycache__/
+*.so
 
-# VSCode or IDEs
+# === 🔧 IDE / Éditeurs ===
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
 
-# OS metadata
+# === 🗂 OS metadata ===
 .DS_Store
 Thumbs.db
+
+# === 📦 Packages ===
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === 📄 Logs & outputs ===
+*.log
+*.out
+*.bak
+
+# === 🧪 Tests ou fichiers temporaires ===
+*.test.py
+*.tmp
+tmp/
+temp/
+
+# === 🔀 Git tools ===
+.git-filter-repo/
+
+# === ⚙️ Pip tools ===
+pip-log.txt
+pip-delete-this-directory.txt
