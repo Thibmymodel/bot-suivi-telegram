@@ -86,13 +86,13 @@ def extraire_followers_tiktok(texte_ocr: str) -> str | None:
         match = re.search(pattern, texte_ocr, re.IGNORECASE)
         if match:
             nombre_str = match.group(1)
-            logger.info(f"extraire_followers_tiktok: Match trouvé avec pattern 	"{pattern}	": 	"{nombre_str}	"")
+            logger.info(f"extraire_followers_tiktok: Match trouvé avec pattern 	'{pattern}	': 	'{nombre_str}	'") # Correction ici
             nombre_normalise = normaliser_nombre_followers(nombre_str)
             if nombre_normalise:
                 logger.info(f"extraire_followers_tiktok: Nombre normalisé: {nombre_normalise}")
                 return nombre_normalise
             else:
-                logger.warning(f"extraire_followers_tiktok: Impossible de normaliser 	"{nombre_str}	"")
+                logger.warning(f"extraire_followers_tiktok: Impossible de normaliser 	'{nombre_str}	'") # Correction ici
 
     logger.info("extraire_followers_tiktok: Aucun match avec mot-clé. Tentative de fallback...")
     nombres_bruts = re.findall(r"(\d[\d.,\s]*[kKmM]?)", texte_ocr)
@@ -127,24 +127,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         if not message or not message.photo:
             logger.info("handle_photo: Message None ou sans photo, sortie.")
-            # Le message d_échec sera envoyé dans le finally si assistant n_est pas changé
             return
 
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created") or not reply.forum_topic_created:
             logger.info("handle_photo: Pas une réponse à un topic valide, sortie.")
-            # Le message d_échec sera envoyé dans le finally si assistant n_est pas changé
             return
             
         topic_name = reply.forum_topic_created.name
         if not topic_name.startswith("SUIVI "):
-            logger.info(f"handle_photo: Nom du topic 	"{topic_name}	" non conforme, sortie.")
-            # Le message d_échec sera envoyé dans le finally si assistant n_est pas changé
+            logger.info(f"handle_photo: Nom du topic 	'{topic_name}	' non conforme, sortie.") # Correction ici
             return
         
         assistant = topic_name.replace("SUIVI ", "").strip().upper()
-        logger.info(f"handle_photo: Assistant extrait: 	"{assistant}	"")
-        # Mettre à jour le message d_échec par défaut avec le nom de l_assistant correct
+        logger.info(f"handle_photo: Assistant extrait: 	'{assistant}	'") # Correction ici
         message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
 
         photo = message.photo[-1]
@@ -159,7 +155,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cropped_image = image.crop((0, 0, width, int(height * 0.4)))
         enhanced_image = ImageOps.autocontrast(cropped_image)
         byte_arr = io.BytesIO()
-        enhanced_image.save(byte_arr, format=	"PNG")
+        enhanced_image.save(byte_arr, format=	'PNG') # Correction ici (guillemets)
         content_vision = byte_arr.getvalue()
 
         image_vision = vision.Image(content=content_vision)
@@ -175,10 +171,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not ocr_text:
             logger.warning("handle_photo: OCR n_a retourné aucun texte.")
-            # Le message d_échec sera envoyé dans le finally
             return
 
-        # Identification du réseau
         if "getallmylinks.com" in ocr_text.lower(): reseau = "instagram"
         elif "beacons.ai" in ocr_text.lower(): reseau = "twitter"
         elif "tiktok" in ocr_text.lower() or any(k in ocr_text.lower() for k in ["followers", "j_aime", "abonnés", "abonné", "fans"]): reseau = "tiktok"
@@ -187,7 +181,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: reseau = "instagram"; logger.info("Réseau non clairement identifié, par défaut Instagram.")
         logger.info(f"handle_photo: Réseau identifié: {reseau}")
 
-        # Extraction Username
         usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
         username = "Non trouvé"
@@ -196,22 +189,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if u_cleaned in [h.lower() for h in reseau_handles]:
                 username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
                 if username != "Non trouvé": break
-        if username == "Non trouvé": # Fallback avec get_close_matches
+        if username == "Non trouvé":
             for u in usernames_found:
                 matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
                 if matches: username = matches[0]; break
-        if username == "Non trouvé" and usernames_found: username = usernames_found[0] # Fallback ultime
-        # Fallback avec URLs
+        if username == "Non trouvé" and usernames_found: username = usernames_found[0]
         urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text, re.IGNORECASE)
         if username == "Non trouvé" and urls:
             for _, u_from_url in urls:
                 match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
                 if match_url: username = match_url[0]; break
-                if username == "Non trouvé": username = u_from_url # Si pas de match proche, prendre direct
+                if username == "Non trouvé": username = u_from_url
         username = corriger_username(username, reseau)
-        logger.info(f"🕵️ Username final : 	"{username}	" (réseau : {reseau})")
+        logger.info(f"🕵️ Username final : 	'{username}	' (réseau : {reseau})") # Correction ici
 
-        # Extraction Abonnés
         abonnés = None
         if reseau == "tiktok":
             abonnés = extraire_followers_tiktok(ocr_text)
@@ -230,17 +221,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"handle_photo: Abonnés extraits ({reseau}): {abonnés}")
 
         if not username or username == "Non trouvé" or not abonnés:
-            logger.warning(f"Données incomplètes: Username (	"{username}	") ou Abonnés (	"{abonnés}	") pour {reseau}.")
-            # Le message d_échec sera envoyé dans le finally
-            # Si on veut un message d_échec spécifique pour données incomplètes, on peut le définir ici
-            # message_status_general = f"🤖 {today} - {assistant} - ⚠️ Données OCR incomplètes ⚠️"
+            logger.warning(f"Données incomplètes: Username (	'{username}	') ou Abonnés (	'{abonnés}	') pour {reseau}.") # Correction ici
             donnees_extraites_ok = False
         else:
             donnees_extraites_ok = True
 
         if message.message_id in already_processed:
             logger.info(f"⚠️ Message ID {message.message_id} déjà traité, on ignore.")
-            return # Ne pas envoyer de message au General si déjà traité
+            return
         already_processed.add(message.message_id)
 
         if donnees_extraites_ok:
@@ -251,27 +239,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sheet.append_row(row)
                 logger.info("handle_photo: Ligne ajoutée à Google Sheets.")
                 message_status_general = f"🤖 {today} - {assistant} - ✅ 1 compte détecté et ajouté ✅"
-                # Message pour le topic de l_assistant (ancien comportement)
                 msg_topic_assistant = f"📊 {today} - {assistant} - {reseau.capitalize()} @{username} ({abonnés}) ajouté ✅"
                 await bot.send_message(chat_id=GROUP_ID, text=msg_topic_assistant, message_thread_id=message.message_thread_id)
                 logger.info("Message de confirmation envoyé au topic de l_assistant.")
             except Exception as e_sheet:
                 logger.error(f"handle_photo: Erreur lors de l_ajout à Google Sheets: {e_sheet}")
                 message_status_general = f"🤖 {today} - {assistant} - ⚠️ Erreur écriture Sheets ⚠️"
-                # Envoyer aussi l_erreur au topic de l_assistant
                 error_message_sheet = f"❌ {today} - Erreur Google Sheets: {str(e_sheet)[:100]}"
                 await bot.send_message(chat_id=GROUP_ID, text=error_message_sheet, message_thread_id=message.message_thread_id)
-        # Si donnees_extraites_ok est False, message_status_general est déjà "Analyse OCR impossible" ou similaire
 
     except Exception as e:
         logger.exception("❌ Erreur globale dans handle_photo")
-        # Assurer que assistant est défini si l_erreur survient après son extraction
-        assistant_nom = assistant if assistant != "INCONNU" else topic_name.replace("SUIVI ", "").strip().upper() if hasattr(reply, "forum_topic_created") and reply.forum_topic_created and reply.forum_topic_created.name.startswith("SUIVI ") else "INCONNU"
+        assistant_nom = assistant if assistant != "INCONNU" else topic_name.replace("SUIVI ", "").strip().upper() if 'reply' in locals() and reply and hasattr(reply, "forum_topic_created") and reply.forum_topic_created and reply.forum_topic_created.name.startswith("SUIVI ") else "INCONNU"
         message_status_general = f"🤖 {today} - {assistant_nom} - ❌ Analyse OCR impossible ❌"
-        # Envoyer aussi l_erreur au topic de l_assistant si possible
         try:
             error_message_topic = f"❌ {today} - Erreur analyse: {str(e)[:100]}"
-            thread_id_for_error = message.message_thread_id if message and hasattr(message, "is_topic_message") and message.is_topic_message else None
+            thread_id_for_error = message.message_thread_id if 'message' in locals() and message and hasattr(message, "is_topic_message") and message.is_topic_message else None
             if thread_id_for_error:
                  await bot.send_message(chat_id=GROUP_ID, text=error_message_topic, message_thread_id=thread_id_for_error)
         except Exception as send_error:
@@ -279,14 +262,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         logger.info(f"Message à envoyer au General: {message_status_general}")
         try:
-            # Envoyer le message de statut au sujet "General" (en omettant message_thread_id)
             await bot.send_message(chat_id=GROUP_ID, text=message_status_general)
             logger.info("Message de statut envoyé au sujet General.")
         except Exception as e_send_general:
             logger.error(f"Impossible d_envoyer le message de statut au sujet General: {e_send_general}")
         logger.info("--- Sortie de handle_photo ---")
 
-# ... (reste du code FastAPI, uvicorn, etc. inchangé)
 from fastapi import FastAPI, Request, HTTPException
 import asyncio
 import uvicorn
@@ -300,7 +281,7 @@ async def startup():
     if mode_polling != "true":
         base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
         if base_webhook_url:
-            normalized_webhook_url = base_webhook_url.rstrip(	"/") + "/webhook"
+            normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
             logger.info(f"Setting webhook to: {normalized_webhook_url}")
             await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
             logger.info("Webhook set.")
@@ -308,7 +289,6 @@ async def startup():
             logger.warning("RAILWAY_PUBLIC_URL not set, webhook not configured.")
     else:
         logger.info("Mode polling activé, pas de configuration de webhook.")
-        pass 
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
