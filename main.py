@@ -24,7 +24,7 @@ SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
 if not google_creds_gspread_json_str:
-    logger.error("La variable d\'environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n\'est pas définie.")
+    logger.error("La variable d'environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n'est pas définie.")
     exit()
 try:
     creds_gspread_dict = json.loads(google_creds_gspread_json_str)
@@ -32,19 +32,19 @@ try:
     gc = gspread.authorize(gspread_creds)
     sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
 except Exception as e:
-    logger.error(f"Erreur lors de l\'initialisation de Google Sheets: {e}")
+    logger.error(f"Erreur lors de l'initialisation de Google Sheets: {e}")
     exit()
 
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if not google_creds_vision_json_str:
-    logger.error("La variable d\'environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n\'est pas définie.")
+    logger.error("La variable d'environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n'est pas définie.")
     exit()
 try:
     creds_vision_dict = json.loads(google_creds_vision_json_str)
     vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
     vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
 except Exception as e:
-    logger.error(f"Erreur lors de l\'initialisation de Google Vision AI: {e}")
+    logger.error(f"Erreur lors de l'initialisation de Google Vision AI: {e}")
     exit()
 
 bot = Bot(TOKEN)
@@ -90,12 +90,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created"):
-            logger.info("Message n\'est pas une réponse à la création d\'un topic.")
+            logger.info("Message n'est pas une réponse à la création d'un topic.")
             return
 
         topic_name = reply.forum_topic_created.name
         if not topic_name.startswith("SUIVI "):
-            logger.info(f"Nom du topic 	'{topic_name}	' ne commence pas par 	'SUIVI 	'.")
+            logger.info(f"Nom du topic '{topic_name}' ne commence pas par 'SUIVI '.")
             return
         assistant = topic_name.replace("SUIVI ", "").strip().upper()
 
@@ -112,7 +112,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enhanced_image = ImageOps.autocontrast(cropped_image)
 
         byte_arr = io.BytesIO()
-        enhanced_image.save(byte_arr, format=	'PNG	')
+        enhanced_image.save(byte_arr, format='PNG')
         content_vision = byte_arr.getvalue()
 
         image_vision = vision.Image(content=content_vision)
@@ -121,7 +121,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if response.error.message:
             raise Exception(
-                f"{response.error.message}\nPour plus d\'informations, visitez https://cloud.google.com/apis/design/errors"
+                f"{response.error.message}\nPour plus d'informations, visitez https://cloud.google.com/apis/design/errors"
             )
 
         ocr_text = ""
@@ -148,7 +148,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
         username = "Non trouvé"
         
-        cleaned_usernames = [re.sub(r	'[^a-zA-Z0-9_.-]	', 	'	', u).lower() for u in usernames_found]
+        cleaned_usernames = [re.sub(r'[^a-zA-Z0-9_.-]', '', u).lower() for u in usernames_found]
         for u_cleaned in cleaned_usernames:
             if u_cleaned in [h.lower() for h in reseau_handles]:
                 for h_original in reseau_handles:
@@ -179,7 +179,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      username = u_from_url
 
         username = corriger_username(username, reseau)
-        logger.info(f"🕵️ Username final : 	'{username}	' (réseau : {reseau})")
+        logger.info(f"🕵️ Username final : '{username}' (réseau : {reseau})")
 
         abonnés = None
         if reseau == "tiktok":
@@ -223,7 +223,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      abonnés = str(numbers_extracted[0])
 
         if not username or username == "Non trouvé" or not abonnés:
-            logger.error(f"Erreur: Nom d\'utilisateur (	'{username}	') ou abonnés (	'{abonnés}	') introuvable. OCR: {ocr_text[:500]}")
+            logger.error(f"Erreur: Nom d'utilisateur ('{username}') ou abonnés ('{abonnés}') introuvable. OCR: {ocr_text[:500]}")
             pass 
 
         if message.message_id in already_processed:
@@ -238,7 +238,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = [today, assistant, reseau, username_to_sheet, abonnés_to_sheet, ""]
         sheet.append_row(row)
 
-        msg = f"📊 {today} - {assistant} - {reseau.capitalize()} @{username if username and username != 	'Non trouvé	' else 	'N/A	'} ({abonnés if abonnés else 	'N/A	'}) ajouté ✅"
+        msg = f"📊 {today} - {assistant} - {reseau.capitalize()} @{username if username and username != 'Non trouvé' else 'N/A'} ({abonnés if abonnés else 'N/A'}) ajouté ✅"
         if not username or username == "Non trouvé" or not abonnés:
             msg = f"⚠️ {today} - {assistant} - Données incomplètes pour {reseau.capitalize()}. OCR: {ocr_text[:100]}... Ajout partiel. ✅"
         
@@ -246,12 +246,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.exception("❌ Erreur traitement handle_photo")
-        error_message = f"❌ {datetime.datetime.now().strftime(	'%d/%m	')} - Erreur analyse: {str(e)[:100]}"
+        error_message = f"❌ {datetime.datetime.now().strftime('%d/%m')} - Erreur analyse: {str(e)[:100]}"
         try:
             thread_id_for_error = message.message_thread_id if message and message.is_topic_message else None
             await bot.send_message(chat_id=GROUP_ID, text=error_message, message_thread_id=thread_id_for_error)
         except Exception as send_error:
-            logger.error(f"Impossible d\'envoyer le message d\'erreur au groupe: {send_error}")
+            logger.error(f"Impossible d'envoyer le message d'erreur au groupe: {send_error}")
 
 from fastapi import FastAPI, Request, HTTPException
 import asyncio
@@ -266,7 +266,6 @@ async def startup():
     if mode_polling != "true":
         base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
         if base_webhook_url:
-            # Normaliser l'URL: supprimer le slash final s'il existe, puis ajouter /webhook
             normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
             logger.info(f"Setting webhook to: {normalized_webhook_url}")
             await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
