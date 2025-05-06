@@ -1,10 +1,10 @@
 python-telegram-bot[webhooks]==20.7
 fastapi
 uvicorn
-pytesseract
 Pillow
 gspread
 oauth2client
 httpx
 nest_asyncio
+google-cloud-vision
 
