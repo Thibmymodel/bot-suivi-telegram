@@ -77,7 +77,7 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
     return valeur
 
 def extraire_followers_tiktok(text_annotations) -> str | None:
-    logger.info(f"extraire_followers_tiktok: Début de l_extraction TikTok.")
+    logger.info("extraire_followers_tiktok: Début de l_extraction TikTok.")
     followers_keyword_annotations = []
     number_annotations = []
 
@@ -85,11 +85,9 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
         logger.warning("extraire_followers_tiktok: Aucune annotation de texte fournie.")
         return None
 
-    # Séparer les mots-clés et les nombres potentiels avec leurs positions
-    for i, annotation in enumerate(text_annotations[1:]): # Ignorer la première annotation (texte complet)
+    for i, annotation in enumerate(text_annotations[1:]):
         text = annotation.description.lower()
         vertices = annotation.bounding_poly.vertices
-        # Calculer le centre Y approximatif du mot-clé ou du nombre
         avg_y = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
         avg_x = (vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) / 4
 
@@ -97,16 +95,14 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
             followers_keyword_annotations.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
             logger.info(f"extraire_followers_tiktok: Mot-clé trouvé: 	'{text}	' à y={avg_y}, x={avg_x}")
         
-        # Essayer de normaliser pour voir si c_est un nombre
         nombre_normalise_test = normaliser_nombre_followers(text)
         if nombre_normalise_test:
-            # Vérifier que ce n_est pas un format heure comme XX:XX
             if not re.fullmatch(r"\d{1,2}:\d{2}", text):
                 number_annotations.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
                 logger.info(f"extraire_followers_tiktok: Nombre potentiel trouvé: 	'{text}	' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
             else:
                 logger.info(f"extraire_followers_tiktok: Nombre ignoré (format heure): 	'{text}	'")
-        elif text.replace(".", "").replace(",", "").isdigit(): # Pour les nombres sans k/M mais avec points/virgules
+        elif text.replace(".", "").replace(",", "").isdigit():
              nombre_simple = text.replace(".", "").replace(",", "")
              if not re.fullmatch(r"\d{1,2}:\d{2}", text):
                 number_annotations.append({"text": text, "normalized": nombre_simple, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
@@ -116,48 +112,37 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
 
     if not followers_keyword_annotations:
         logger.warning("extraire_followers_tiktok: Aucun mot-clé de followers trouvé.")
-        # Fallback: si on a 3 nombres groupés comme Suivis / Followers / J_aime
         if len(number_annotations) >= 3:
-            # Trier par position X pour obtenir l_ordre Suivis, Followers, J_aime
             number_annotations.sort(key=lambda ann: ann["avg_x"])
-            # Vérifier s_ils sont à peu près sur la même ligne (Y)
-            if abs(number_annotations[0]["avg_y"] - number_annotations[1]["avg_y"]) < 20 and \ 
-               abs(number_annotations[1]["avg_y"] - number_annotations[2]["avg_y"]) < 20: 
-                logger.info(f"extraire_followers_tiktok (Fallback mots-clés absents): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations[1][	"normalized	"]}")
+            # Correction de la continuation de ligne ici
+            if (abs(number_annotations[0]["avg_y"] - number_annotations[1]["avg_y"]) < 20 and
+                abs(number_annotations[1]["avg_y"] - number_annotations[2]["avg_y"]) < 20):
+                logger.info(f"extraire_followers_tiktok (Fallback mots-clés absents): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations[1]['normalized']}")
                 return number_annotations[1]["normalized"]
         logger.warning("extraire_followers_tiktok (Fallback mots-clés absents): Conditions non remplies pour le fallback des 3 nombres.")
         return None
 
-    # Chercher le nombre le plus proche (généralement au-dessus) du mot-clé "followers"
     best_candidate = None
-    min_distance = float(	"inf")
+    min_distance = float('inf')
 
     for kw_ann in followers_keyword_annotations:
         for num_ann in number_annotations:
-            # Le nombre doit être au-dessus ou très légèrement en dessous du mot-clé, et proche horizontalement
-            y_diff = kw_ann["avg_y"] - num_ann["avg_y"] # Positif si le nombre est au-dessus
+            y_diff = kw_ann["avg_y"] - num_ann["avg_y"]
             x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
             
-            logger.debug(f"extraire_followers_tiktok: Comparaison: kw=	'{kw_ann["text"]}	' (y={kw_ann["avg_y"]}) avec num=	'{num_ann["text"]}	' (y={num_ann["avg_y"]}). y_diff={y_diff}, x_diff={x_diff}")
+            logger.debug(f"extraire_followers_tiktok: Comparaison: kw='	{kw_ann['text']}	' (y={kw_ann['avg_y']}) avec num='	{num_ann['text']}	' (y={num_ann['avg_y']}). y_diff={y_diff}, x_diff={x_diff}")
 
-            # Critères: nombre au-dessus (y_diff > -5, tolérance pour légère superposition) et pas trop loin horizontalement
-            # et le nombre ne doit pas être trop petit (ex: ignorer "22" Suivis si on cherche des milliers de followers)
-            # On s_attend à ce que le nombre de followers soit plus grand que le nombre de suivis.
-            if y_diff > -15 and x_diff < 100: # Le nombre est au-dessus ou très proche, et aligné horizontalement
-                # Simple distance euclidienne pour départager si plusieurs candidats proches
+            if y_diff > -15 and x_diff < 100:
                 distance = (y_diff**2 + x_diff**2)**0.5
                 if distance < min_distance:
-                    # Éviter de prendre un nombre comme "20" (de "20 | Ecole de graphisme") si le mot-clé est "followers"
-                    # et qu_un autre nombre plus plausible existe.
-                    # Pour l_image test, le "1326" est au-dessus de "Followers"
-                    if kw_ann["text"] == "followers" and int(num_ann["normalized"]) > 100: # Heuristique simple
+                    if kw_ann["text"] == "followers" and int(num_ann["normalized"]) > 100:
                         min_distance = distance
                         best_candidate = num_ann["normalized"]
-                        logger.info(f"extraire_followers_tiktok: Nouveau meilleur candidat: {best_candidate} (distance: {min_distance} de 	'{kw_ann["text"]}	')")
-                    elif kw_ann["text"] != "followers": # Pour les autres mots-clés, être moins strict
+                        logger.info(f"extraire_followers_tiktok: Nouveau meilleur candidat: {best_candidate} (distance: {min_distance} de 	'{kw_ann['text']}	')")
+                    elif kw_ann["text"] != "followers":
                         min_distance = distance
                         best_candidate = num_ann["normalized"]
-                        logger.info(f"extraire_followers_tiktok: Nouveau meilleur candidat (autre mot-clé): {best_candidate} (distance: {min_distance} de 	'{kw_ann["text"]}	')")
+                        logger.info(f"extraire_followers_tiktok: Nouveau meilleur candidat (autre mot-clé): {best_candidate} (distance: {min_distance} de 	'{kw_ann['text']}	')")
     
     if best_candidate:
         logger.info(f"extraire_followers_tiktok: Nombre de followers final extrait: {best_candidate}")
@@ -172,31 +157,31 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.datetime.now().strftime("%d/%m/%Y")
     message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
     donnees_extraites_ok = False
-    reply_message_exists_for_error_handling = False # Pour savoir si on peut récupérer le topic_name en cas d_erreur précoce
+    reply_message_exists_for_error_handling = False
     topic_name_for_error_handling = ""
 
     try:
         message = update.message
         if not message or not message.photo:
             logger.info("handle_photo: Message None ou sans photo, sortie.")
-            return # Le message d_échec sera envoyé dans le finally
+            return
 
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created") or not reply.forum_topic_created:
             logger.info("handle_photo: Pas une réponse à un topic valide, sortie.")
-            return # Le message d_échec sera envoyé dans le finally
+            return
         
         reply_message_exists_for_error_handling = True
         topic_name = reply.forum_topic_created.name
-        topic_name_for_error_handling = topic_name # Sauvegarder pour le bloc except
+        topic_name_for_error_handling = topic_name
 
         if not topic_name.startswith("SUIVI "):
             logger.info(f"handle_photo: Nom du topic 	'{topic_name}	' non conforme, sortie.")
-            return # Le message d_échec sera envoyé dans le finally
+            return
         
         assistant = topic_name.replace("SUIVI ", "").strip().upper()
         logger.info(f"handle_photo: Assistant extrait: 	'{assistant}	'")
-        message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌" # Mettre à jour avec l_assistant correct
+        message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
 
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
@@ -207,16 +192,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         image = Image.open(io.BytesIO(img_content))
         width, height = image.size
-        # Le recadrage à 40% est conservé, car il semble cibler la zone d_intérêt
         cropped_image = image.crop((0, 0, width, int(height * 0.4)))
         enhanced_image = ImageOps.autocontrast(cropped_image)
         byte_arr = io.BytesIO()
-        enhanced_image.save(byte_arr, format=	'PNG	')
+        enhanced_image.save(byte_arr, format='PNG')
         content_vision = byte_arr.getvalue()
 
         image_vision = vision.Image(content=content_vision)
         response = vision_client.text_detection(image=image_vision)
-        texts_annotations_vision = response.text_annotations # Conserver toutes les annotations pour l_analyse spatiale
+        texts_annotations_vision = response.text_annotations
 
         if response.error.message:
             logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
@@ -227,12 +211,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not ocr_text_full:
             logger.warning("handle_photo: OCR n_a retourné aucun texte.")
-            return # Le message d_échec sera envoyé dans le finally
+            return
 
-        # Identification du réseau (basée sur le texte complet)
         if "getallmylinks.com" in ocr_text_full.lower(): reseau = "instagram"
         elif "beacons.ai" in ocr_text_full.lower(): reseau = "twitter"
-        # Pour TikTok, on se fie plus à la présence de mots-clés spécifiques à TikTok dans l_ensemble du texte
         elif "tiktok" in ocr_text_full.lower() or any(k in ocr_text_full.lower() for k in ["followers", "j_aime", "abonnés", "abonné", "fans", "suivis"]):
             reseau = "tiktok"
         elif "threads" in ocr_text_full.lower(): reseau = "threads"
@@ -241,7 +223,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: reseau = "instagram"; logger.info("Réseau non clairement identifié, par défaut Instagram.")
         logger.info(f"handle_photo: Réseau identifié: {reseau}")
 
-        # Extraction Username (basée sur le texte complet)
         usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
         username = "Non trouvé"
@@ -264,11 +245,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = corriger_username(username, reseau)
         logger.info(f"🕵️ Username final : 	'{username}	' (réseau : {reseau})")
 
-        # Extraction Abonnés
         abonnés = None
         if reseau == "tiktok":
-            abonnés = extraire_followers_tiktok(texts_annotations_vision) # Passer toutes les annotations
-        else: # Pour Instagram, Threads, etc.
+            abonnés = extraire_followers_tiktok(texts_annotations_vision)
+        else:
             match_explicit = re.search(r"(\d[\d.,\s]*[kKmM]?)\s*(?:abonnés|followers|suivies|suivi\(e\)s|abonné)", ocr_text_full, re.IGNORECASE)
             if match_explicit: abonnés = normaliser_nombre_followers(match_explicit.group(1))
             if not abonnés:
@@ -290,7 +270,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if message.message_id in already_processed:
             logger.info(f"⚠️ Message ID {message.message_id} déjà traité, on ignore.")
-            return # Ne pas envoyer de message au General si déjà traité
+            return
         already_processed.add(message.message_id)
 
         if donnees_extraites_ok:
@@ -301,29 +281,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sheet.append_row(row)
                 logger.info("handle_photo: Ligne ajoutée à Google Sheets.")
                 message_status_general = f"🤖 {today} - {assistant} - ✅ 1 compte détecté et ajouté ✅"
-                # NE PLUS ENVOYER DE MESSAGE AU TOPIC DE L_ASSISTANT
-                # msg_topic_assistant = f"📊 {today} - {assistant} - {reseau.capitalize()} @{username} ({abonnés}) ajouté ✅"
-                # await bot.send_message(chat_id=GROUP_ID, text=msg_topic_assistant, message_thread_id=message.message_thread_id)
-                # logger.info("Message de confirmation envoyé au topic de l_assistant.") 
             except Exception as e_sheet:
                 logger.error(f"handle_photo: Erreur lors de l_ajout à Google Sheets: {e_sheet}")
                 message_status_general = f"🤖 {today} - {assistant} - ⚠️ Erreur écriture Sheets ⚠️"
-                # Si l_écriture Sheets échoue, on n_envoie pas non plus au topic de l_assistant (déjà commenté)
-        # Si donnees_extraites_ok est False, message_status_general est déjà "Analyse OCR impossible" ou similaire
 
     except Exception as e:
         logger.exception("❌ Erreur globale dans handle_photo")
-        # Essayer de récupérer le nom de l_assistant même en cas d_erreur précoce
         assistant_nom_erreur = assistant
         if assistant == "INCONNU" and reply_message_exists_for_error_handling and topic_name_for_error_handling.startswith("SUIVI "):
             assistant_nom_erreur = topic_name_for_error_handling.replace("SUIVI ", "").strip().upper()
         message_status_general = f"🤖 {today} - {assistant_nom_erreur} - ❌ Analyse OCR impossible ❌"
-        # Pas d_envoi au topic de l_assistant en cas d_erreur globale non plus
 
     finally:
         logger.info(f"Message à envoyer au General: {message_status_general}")
         try:
-            await bot.send_message(chat_id=GROUP_ID, text=message_status_general) # Pas de message_thread_id pour envoyer au General
+            await bot.send_message(chat_id=GROUP_ID, text=message_status_general)
             logger.info("Message de statut envoyé au sujet General.")
         except Exception as e_send_general:
             logger.error(f"Impossible d_envoyer le message de statut au sujet General: {e_send_general}")
@@ -342,7 +314,7 @@ async def startup():
     if mode_polling != "true":
         base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
         if base_webhook_url:
-            normalized_webhook_url = base_webhook_url.rstrip(	"/	") + "/webhook"
+            normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
             logger.info(f"Setting webhook to: {normalized_webhook_url}")
             await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
             logger.info("Webhook set.")
