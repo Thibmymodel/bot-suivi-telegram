@@ -88,10 +88,10 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
     logger.info(f"extraire_followers_tiktok: Nombre total d_annotations reçues: {len(text_annotations)}")
     if len(text_annotations) > 1:
         logger.info("extraire_followers_tiktok: Premières annotations (description et position Y moyenne):")
-        for i, annotation in enumerate(text_annotations[1:6]): # Log les 5 premières annotations individuelles
+        for i, annotation in enumerate(text_annotations[1:6]): 
             vertices = annotation.bounding_poly.vertices
             avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
-            logger.info(f"  - Ann {i+1}: 	'{annotation.description}	' (avg_y: {avg_y_log})")
+            logger.info(f"  - Ann {i+1}: 	'{annotation.description}	' (avg_y: {avg_y_log})") # Guillemets simples pour la clé
 
     for i, annotation in enumerate(text_annotations[1:]):
         text = annotation.description.lower()
@@ -119,21 +119,21 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
              else:
                 logger.info(f"extraire_followers_tiktok: Nombre simple 	'{text}	' ignoré (format heure).")
     
-    logger.info(f"extraire_followers_tiktok: Fin de la boucle d_analyse des annotations.")
+    logger.info("extraire_followers_tiktok: Fin de la boucle d_analyse des annotations.")
     logger.info(f"extraire_followers_tiktok: Nombre de mots-clés trouvés: {len(followers_keyword_annotations)}")
     logger.info(f"extraire_followers_tiktok: Nombre de nombres potentiels trouvés: {len(number_annotations)}")
     for idx, na in enumerate(number_annotations):
-        logger.info(f"  - Nombre {idx}: {na["text"]} (normalisé: {na["normalized"]}) à y={na["avg_y"]}")
+        logger.info(f"  - Nombre {idx}: {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}") # Correction: guillemets simples
 
     if not followers_keyword_annotations:
         logger.warning("extraire_followers_tiktok: Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
         if len(number_annotations) >= 3:
-            number_annotations.sort(key=lambda ann: ann["avg_x"])
-            logger.info(f"extraire_followers_tiktok (Fallback): Nombres triés par X: {[na[	'text	'] for na in number_annotations]}")
-            if (abs(number_annotations[0]["avg_y"] - number_annotations[1]["avg_y"]) < 20 and
-                abs(number_annotations[1]["avg_y"] - number_annotations[2]["avg_y"]) < 20):
+            number_annotations.sort(key=lambda ann: ann['avg_x'])
+            logger.info(f"extraire_followers_tiktok (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations]}")
+            if (abs(number_annotations[0]['avg_y'] - number_annotations[1]['avg_y']) < 20 and
+                abs(number_annotations[1]['avg_y'] - number_annotations[2]['avg_y']) < 20):
                 logger.info(f"extraire_followers_tiktok (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations[1]['normalized']}")
-                return number_annotations[1]["normalized"]
+                return number_annotations[1]['normalized']
             else:
                 logger.warning("extraire_followers_tiktok (Fallback): Les 3 nombres ne sont pas alignés en Y.")
         else:
@@ -148,25 +148,24 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
     for kw_ann in followers_keyword_annotations:
         logger.info(f"  - Analyse pour mot-clé: 	'{kw_ann['text']}	' à y={kw_ann['avg_y']}")
         for num_ann in number_annotations:
-            y_diff = kw_ann["avg_y"] - num_ann["avg_y"]
-            x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
+            y_diff = kw_ann['avg_y'] - num_ann['avg_y']
+            x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
             
             logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}	' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
 
-            if y_diff > -20 and x_diff < 150: # Nombre au-dessus ou très proche (-20 pour tolérer légère superposition), et aligné horizontalement (150px)
+            if y_diff > -20 and x_diff < 150: 
                 distance = (y_diff**2 + x_diff**2)**0.5
                 logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
                 if distance < min_distance:
-                    # Heuristique: le nombre de followers est généralement > 100 et plus grand que le nombre de "suivis"
                     try:
-                        current_num_val = int(num_ann["normalized"])
-                        if kw_ann["text"] == "followers" and current_num_val > 50: # Seuil abaissé pour plus de flexibilité
+                        current_num_val = int(num_ann['normalized'])
+                        if kw_ann['text'] == "followers" and current_num_val > 50: 
                             min_distance = distance
-                            best_candidate = num_ann["normalized"]
+                            best_candidate = num_ann['normalized']
                             logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour 'followers'): {best_candidate} (distance: {min_distance:.2f})")
-                        elif kw_ann["text"] != "followers": # Pour autres mots-clés (abonnés, etc.)
+                        elif kw_ann['text'] != "followers": 
                             min_distance = distance
-                            best_candidate = num_ann["normalized"]
+                            best_candidate = num_ann['normalized']
                             logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour '	{kw_ann['text']}	'): {best_candidate} (distance: {min_distance:.2f})")
                         else:
                             logger.debug(f"      Candidat 	'{num_ann['text']}	' non retenu pour 'followers' (valeur < 50 ou autre critère).")
@@ -182,14 +181,12 @@ def extraire_followers_tiktok(text_annotations) -> str | None:
         return best_candidate
     else:
         logger.warning("extraire_followers_tiktok: Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
-        # Si aucun candidat n_est trouvé avec la logique spatiale, mais qu_on a des nombres, on tente un dernier fallback
         if number_annotations:
-            # Trier par valeur numérique décroissante, en espérant que le plus grand soit les followers
             number_annotations.sort(key=lambda x: int(x.get("normalized", 0)), reverse=True)
-            logger.info(f"extraire_followers_tiktok (Fallback final): Nombres triés par valeur: {[na[	'text	'] for na in number_annotations]}")
-            if number_annotations[0]["normalized"]:
+            logger.info(f"extraire_followers_tiktok (Fallback final): Nombres triés par valeur: {[na['text'] for na in number_annotations]}") # Guillemets simples
+            if number_annotations[0]['normalized']:
                  logger.warning(f"extraire_followers_tiktok (Fallback final): Sélection du plus grand nombre: {number_annotations[0]['normalized']}")
-                 return number_annotations[0]["normalized"]
+                 return number_annotations[0]['normalized']
         logger.warning("extraire_followers_tiktok (Fallback final): Aucun nombre à retourner.")
         return None
 
