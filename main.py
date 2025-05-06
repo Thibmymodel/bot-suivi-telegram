@@ -1,4 +1,4 @@
-# [...] (autres imports)
+import json # Ajout de l'import manquant
 import io
 import re
 import datetime
@@ -220,13 +220,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if not abonnés:
                 # Logique des trois blocs de chiffres (moins prioritaire)
-                # (\d{1,3}(?:[ .,]\d{3})*){1} # Publications
-                # (\d{1,3}(?:[ .,]\d{3})*){2} # Abonnés
-                # (\d{1,3}(?:[ .,]\d{3})*){3} # Suivis
-                # On cherche une séquence de 3 nombres, le 2ème est les abonnés
-                # Regex pour trouver des nombres (avec k, m), en ignorant les mots entre eux
                 numbers_extracted = []
-                # Regex pour extraire les nombres, y compris avec k/m, en ignorant les séparateurs courants
                 raw_numbers = re.findall(r"(\d+(?:[.,]\d+)?(?:[kKmM]?))", ocr_text)
                 for num_str in raw_numbers:
                     val = num_str.lower().replace(",", ".") # Normaliser virgule
@@ -240,32 +234,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         numbers_extracted.append(int(float(val) * multiplier))
                     except ValueError:
-                        continue # Ignorer si ce n'est pas un nombre valide
+                        continue 
                 
                 logger.info(f"Nombres extraits pour analyse abonnés: {numbers_extracted}")
 
-                # Heuristique: si on a 3 nombres proéminents, le 2ème est souvent les abonnés
-                # Ceci est une simplification et peut nécessiter un ajustement basé sur les formats réels des captures d'écran
                 if len(numbers_extracted) >= 3:
-                     # On cherche une séquence où le 2e nombre est plausiblement les abonnés
-                     # (par ex. plus grand que le 3e (suivis) et potentiellement plus petit que le 1er (posts) ou pas)
-                     # Pour l'instant, on prend le 2e s'il y en a au moins 3. C'est une heuristique forte.
-                     # Une meilleure approche serait de regarder le contexte autour des nombres si possible.
                      abonnés = str(numbers_extracted[1]) 
-                elif len(numbers_extracted) == 2 and reseau == "instagram": # Cas fréquent: Posts, Followers (pas de Following visible)
+                elif len(numbers_extracted) == 2 and reseau == "instagram":
                      abonnés = str(numbers_extracted[1])
-                elif len(numbers_extracted) == 1 and reseau == "instagram": # Cas: juste le nombre de followers visible
+                elif len(numbers_extracted) == 1 and reseau == "instagram": 
                      abonnés = str(numbers_extracted[0])
 
         if not username or username == "Non trouvé" or not abonnés:
             logger.error(f"Erreur: Nom d'utilisateur ('{username}') ou abonnés ('{abonnés}') introuvable. OCR: {ocr_text[:500]}")
-            # Optionnel: envoyer un message d'erreur plus détaillé au groupe si le débogage est nécessaire
-            # await bot.send_message(chat_id=GROUP_ID, text=f"❌ {datetime.datetime.now().strftime('%d/%m')} - OCR incomplet. User: {username}, Abo: {abonnés}. Texte: {ocr_text[:200]}")
-            # Ne pas lever d'exception ici pour éviter de bloquer, mais logguer l'erreur.
-            # On pourrait choisir de ne pas ajouter la ligne au sheet si les données sont incomplètes.
-            # Pour l'instant, on continue, mais la ligne sera potentiellement vide ou incorrecte.
-            # return # Décommenter pour ne pas ajouter de ligne si incomplet
-            pass # Permet de continuer et d'ajouter une ligne même si incomplète
+            pass 
 
         if message.message_id in already_processed:
             logger.info("⚠️ Message déjà traité, on ignore.")
@@ -273,7 +255,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         already_processed.add(message.message_id)
 
         today = datetime.datetime.now().strftime("%d/%m/%Y")
-        # S'assurer que username et abonnés sont des strings, même si None ou vide
         username_to_sheet = f"@{username}" if username and username != "Non trouvé" else ""
         abonnés_to_sheet = str(abonnés) if abonnés else ""
 
@@ -290,25 +271,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("❌ Erreur traitement handle_photo")
         error_message = f"❌ {datetime.datetime.now().strftime('%d/%m')} - Erreur analyse: {str(e)[:100]}"
         try:
-            # Essayer d'envoyer le message d'erreur dans le bon fil de discussion si possible
             thread_id_for_error = message.message_thread_id if message and message.is_topic_message else None
             await bot.send_message(chat_id=GROUP_ID, text=error_message, message_thread_id=thread_id_for_error)
         except Exception as send_error:
             logger.error(f"Impossible d'envoyer le message d'erreur au groupe: {send_error}")
 
-# --- main (pour FastAPI/Uvicorn) --- 
-# (Logique FastAPI et webhook inchangée, s'assurer que les imports sont en haut)
-# Exemple de structure FastAPI (à adapter si vous utilisez déjà FastAPI)
 from fastapi import FastAPI, Request, HTTPException
 import asyncio
-import uvicorn # Assurez-vous qu'il est importé
+import uvicorn
 
-app = FastAPI(lifespan=None) # Lifespan on/off géré dans le CMD du Dockerfile
+app = FastAPI(lifespan=None)
 
 @app.on_event("startup")
 async def startup():
     logger.info("Application startup...")
-    # S'assurer que le webhook est configuré si MODE_POLLING n'est pas "true"
     mode_polling = os.getenv("MODE_POLLING", "false").lower()
     if mode_polling != "true":
         webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
@@ -322,12 +298,6 @@ async def startup():
             logger.warning("RAILWAY_PUBLIC_URL not set, webhook not configured.")
     else:
         logger.info("Mode polling activé, pas de configuration de webhook.")
-        # Lancer le polling dans une tâche de fond
-        # Ceci est une approche simplifiée. Pour une prod robuste, considérez `python-telegram-bot.Application.run_polling()`
-        # Mais comme on est dans un contexte FastAPI, il faut le gérer différemment.
-        # Pour l'instant, on suppose que si polling est activé, l'utilisateur gère le lancement du polling séparément
-        # ou que le framework Railway/Uvicorn ne convient pas directement au polling de cette manière.
-        # Le template original utilisait webhook, donc on priorise cela.
         pass 
 
 @app.post("/webhook")
@@ -335,15 +305,8 @@ async def webhook_handler(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, bot)
-        # Créer un contexte factice si nécessaire, ou adapter pour utiliser Application de PTB
-        # Pour une intégration propre avec PTB et FastAPI, il faudrait utiliser `Application.builder().updater(None).build()`
-        # et ensuite `await application.process_update(update)`
-        # Simplification pour l'instant :
-        # On suppose que handle_photo est la seule fonction à appeler
-        if update.message and update.message.photo:
-            # Création d'un contexte basique. Pour des fonctionnalités avancées de PTB (comme context.bot_data), il faudrait une Application complète.
-            context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
-            await handle_photo(update, context)
+        context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
+        await handle_photo(update, context)
         return {"status": "ok"}
     except json.JSONDecodeError:
         logger.error("Error decoding JSON from webhook")
@@ -353,20 +316,14 @@ async def webhook_handler(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    # Cette section est pour le développement local ou si on n'utilise pas Uvicorn directement via Procfile
-    # Pour Railway, le Procfile/Dockerfile CMD est prioritaire.
     mode_polling = os.getenv("MODE_POLLING", "false").lower()
     if mode_polling == "true":
         logger.info("Lancement en mode polling...")
-        # Utilisation de Application pour le polling
         application = Application.builder().token(TOKEN).build()
         application.add_handler(MessageHandler(filters.PHOTO & (~filters.COMMAND), handle_photo))
-        # Lancer le bot jusqu'à ce que l'utilisateur appuie sur Ctrl-C
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     else:
         logger.info("Lancement en mode webhook avec Uvicorn (localement)...")
-        # Uvicorn est généralement lancé par le Dockerfile CMD sur Railway
-        # Pour le dev local :
         port = int(os.getenv("PORT", 8000))
         uvicorn.run(app, host="0.0.0.0", port=port)
 
