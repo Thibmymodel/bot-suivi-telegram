@@ -1,17 +1,17 @@
-import json # Ajout de l'import manquant
+import json
 import io
 import re
 import datetime
 import logging
-import os # Ajout pour les variables d'environnement
+import os
 from difflib import get_close_matches
 
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from PIL import Image, ImageOps
 import gspread
-from google.oauth2.service_account import Credentials # Modifié pour gspread v6+
-from google.cloud import vision # Ajout pour Google Vision AI
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials # Renommé pour clarté
+from google.cloud import vision
 
 # Configuration du logging
 logging.basicConfig(
@@ -24,41 +24,47 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
-# Authentification Google Sheets (adapté pour gspread v6+ et variables d'environnement)
-google_creds_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD") # Nom de variable distinct pour gspread
-if not google_creds_json_str:
+# Authentification Google Sheets
+google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
+if not google_creds_gspread_json_str:
     logger.error("La variable d'environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n'est pas définie.")
-    # Gérer l'erreur ou quitter
+    exit()
+try:
+    creds_gspread_dict = json.loads(google_creds_gspread_json_str)
+    gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    gc = gspread.authorize(gspread_creds)
+    sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+except Exception as e:
+    logger.error(f"Erreur lors de l'initialisation de Google Sheets: {e}")
     exit()
 
-scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-creds_dict = json.loads(google_creds_json_str)
-creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-gc = gspread.authorize(creds)
-sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-
 # Initialisation du client Google Vision AI
-# GOOGLE_APPLICATION_CREDENTIALS est utilisé automatiquement par la bibliothèque cliente si défini
-vision_client = vision.ImageAnnotatorClient()
+google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+if not google_creds_vision_json_str:
+    logger.error("La variable d'environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n'est pas définie.")
+    exit()
+try:
+    creds_vision_dict = json.loads(google_creds_vision_json_str)
+    vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
+    vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
+except Exception as e:
+    logger.error(f"Erreur lors de l'initialisation de Google Vision AI: {e}")
+    exit()
 
 bot = Bot(TOKEN)
 already_processed = set()
 
-# Charger les pseudos connus
 with open("known_handles.json", "r", encoding="utf-8") as f:
     KNOWN_HANDLES = json.load(f)
 
 def corriger_username(username: str, reseau: str) -> str:
-    # (Logique de correction inchangée)
     if reseau == "instagram" and username.startswith("@"):
         return username[1:]
     return username
 
-# --- Extraction followers dédiée TikTok ---
 def extraire_followers_tiktok(texte_ocr: str) -> str | None:
     lignes = texte_ocr.replace(",", ".").split()
     nombres = []
-
     for mot in lignes:
         mot_clean = re.sub(r"[^\d.]", "", mot)
         if mot_clean:
@@ -66,7 +72,7 @@ def extraire_followers_tiktok(texte_ocr: str) -> str | None:
                 if "k" in mot.lower():
                     mot_clean = mot_clean.replace("k", "")
                     nombre = float(mot_clean) * 1000
-                elif "m" in mot.lower(): # Ajout pour les millions
+                elif "m" in mot.lower():
                     mot_clean = mot_clean.replace("m", "")
                     nombre = float(mot_clean) * 1000000
                 else:
@@ -74,21 +80,18 @@ def extraire_followers_tiktok(texte_ocr: str) -> str | None:
                 nombres.append(int(nombre))
             except:
                 continue
-
     if len(nombres) >= 2:
-        return str(nombres[1])  # 2e bloc numérique = followers
-    elif len(nombres) == 1: # Au cas où seul le nombre de followers est détecté
+        return str(nombres[1])
+    elif len(nombres) == 1:
         return str(nombres[0])
     return None
 
-# --- handle_photo ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message = update.message
         if not message or not message.photo:
             return
 
-        # (Logique de vérification du topic et de l'assistant inchangée)
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created"):
             logger.info("Message n'est pas une réponse à la création d'un topic.")
@@ -109,17 +112,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         image = Image.open(io.BytesIO(img_content))
         width, height = image.size
-        # Conserver le recadrage pour optimiser l'analyse OCR
-        # Le recadrage à 40% de la hauteur est conservé
         cropped_image = image.crop((0, 0, width, int(height * 0.4)))
         enhanced_image = ImageOps.autocontrast(cropped_image)
 
-        # Sauvegarder l'image améliorée en bytes pour Google Vision
         byte_arr = io.BytesIO()
-        enhanced_image.save(byte_arr, format='PNG') # PNG est un bon format sans perte
+        enhanced_image.save(byte_arr, format='PNG')
         content_vision = byte_arr.getvalue()
 
-        # Appel à Google Vision AI
         image_vision = vision.Image(content=content_vision)
         response = vision_client.text_detection(image=image_vision)
         texts = response.text_annotations
@@ -131,12 +130,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ocr_text = ""
         if texts:
-            ocr_text = texts[0].description # Le premier élément est le texte complet
+            ocr_text = texts[0].description
         
         logger.info(f"🔍 OCR Google Vision brut :\n{ocr_text}")
-
-        # (Logique d'identification du réseau, extraction username et abonnés inchangée,
-        # mais elle utilisera 'ocr_text' provenant de Google Vision)
 
         if "getallmylinks.com" in ocr_text.lower():
             reseau = "instagram"
@@ -149,21 +145,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif any(x in ocr_text.lower() for x in ["modifier le profil", "suivi(e)s", "publications"]):
             reseau = "instagram"
         else:
-            # Par défaut ou si non clairement identifiable, on pourrait mettre une logique plus fine
-            # ou laisser comme avant
             reseau = "instagram" 
             logger.info("Réseau non clairement identifié, par défaut Instagram.")
 
-        usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text) # étendu pour inclure '.' et '-' 
+        usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
         username = "Non trouvé"
         
-        # Amélioration de la recherche de username
-        # 1. Recherche exacte (après nettoyage) parmi les handles connus
         cleaned_usernames = [re.sub(r'[^a-zA-Z0-9_.-]', '', u).lower() for u in usernames_found]
         for u_cleaned in cleaned_usernames:
             if u_cleaned in [h.lower() for h in reseau_handles]:
-                # Retrouver le handle original pour la casse
                 for h_original in reseau_handles:
                     if h_original.lower() == u_cleaned:
                         username = h_original
@@ -171,29 +162,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if username != "Non trouvé":
                     break
         
-        # 2. Si pas trouvé, recherche avec get_close_matches
         if username == "Non trouvé":
             for u in usernames_found:
-                matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7) # Cutoff un peu plus strict
+                matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
                 if matches:
                     username = matches[0]
                     break
         
-        # 3. Si toujours pas trouvé et qu'il y a des candidats, prendre le premier (ou le plus long, ou autre heuristique)
         if username == "Non trouvé" and usernames_found:
-            username = usernames_found[0] # Peut être affiné
+            username = usernames_found[0]
 
-        # (Logique d'extraction des URLs et username à partir des URLs inchangée)
         urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text, re.IGNORECASE)
-        if username == "Non trouvé" and urls: # Tenter via URL si username non trouvé
+        if username == "Non trouvé" and urls:
             for _, u_from_url in urls:
-                # Essayer de matcher avec les handles connus
                 match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
                 if match_url:
                     username = match_url[0]
                     break
-                # Sinon, prendre le username de l'URL tel quel
-                if username == "Non trouvé": # S'assurer qu'on ne l'a pas déjà trouvé
+                if username == "Non trouvé":
                      username = u_from_url
 
         username = corriger_username(username, reseau)
@@ -203,10 +189,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reseau == "tiktok":
             abonnés = extraire_followers_tiktok(ocr_text)
         else:
-            # Logique d'extraction des abonnés pour Instagram/Twitter/Threads
-            # Essayer de trouver "XXX Abonnés" ou "XXX Followers"
-            # Le regex doit être robuste aux variations (espaces, majuscules, etc.)
-            # Priorité aux chiffres explicitement suivis de "abonnés" ou "followers"
             match_explicit = re.search(r"(\d{1,3}(?:[ .,kKmM]?\d{1,3})*)\s*(?:abonnés|followers|suivies|suivi\(e\)s)", ocr_text, re.IGNORECASE)
             if match_explicit:
                 abonnés_str = match_explicit.group(1).lower()
@@ -219,11 +201,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     abonnés = abonnés_str
             
             if not abonnés:
-                # Logique des trois blocs de chiffres (moins prioritaire)
                 numbers_extracted = []
                 raw_numbers = re.findall(r"(\d+(?:[.,]\d+)?(?:[kKmM]?))", ocr_text)
                 for num_str in raw_numbers:
-                    val = num_str.lower().replace(",", ".") # Normaliser virgule
+                    val = num_str.lower().replace(",", ".")
                     multiplier = 1
                     if "k" in val:
                         multiplier = 1000
@@ -305,6 +286,9 @@ async def webhook_handler(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, bot)
+        # Utilisation de l'application PTB pour créer un contexte si disponible, sinon contexte simple
+        # Pour une intégration complète, l'objet `application` de PTB devrait être accessible ici.
+        # Dans ce cas, on crée un contexte simple.
         context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
         await handle_photo(update, context)
         return {"status": "ok"}
