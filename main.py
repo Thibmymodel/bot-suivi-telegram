@@ -4,7 +4,7 @@ import re
 import datetime
 import logging
 import os
-import traceback
+import traceback # Assurez-vous que traceback est importé
 from difflib import get_close_matches
 
 from telegram import Update, Bot
@@ -22,9 +22,8 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-TELEGRAM_GENERAL_TOPIC_THREAD_ID = os.getenv("TELEGRAM_GENERAL_TOPIC_THREAD_ID")
 
-
+# Initialisation Google Sheets
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
 if not google_creds_gspread_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
@@ -40,6 +39,7 @@ except Exception as e:
     logger.error(traceback.format_exc())
     exit()
 
+# Initialisation Google Vision AI
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if not google_creds_vision_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
@@ -54,586 +54,415 @@ except Exception as e:
     logger.error(traceback.format_exc())
     exit()
 
-KNOWN_HANDLES = {}
-try:
-    with open("known_handles.json", "r", encoding="utf-8") as f:
-        KNOWN_HANDLES = json.load(f)
-    logger.info("Fichier known_handles.json chargé.")
-except FileNotFoundError:
-    logger.warning("Le fichier known_handles.json n_a pas été trouvé. Le bot fonctionnera sans.")
-except json.JSONDecodeError:
-    logger.error("Erreur lors du décodage de known_handles.json. Le fichier est peut-être corrompu.")
-except Exception as e:
-    logger.error(f"Erreur inattendue lors du chargement de known_handles.json: {e}")
+bot = Bot(TOKEN)
+already_processed = set()
+
+with open("known_handles.json", "r", encoding="utf-8") as f:
+    KNOWN_HANDLES = json.load(f)
 
 def corriger_username(username: str, reseau: str) -> str:
     if reseau == "instagram" and username.startswith("@"):
-        username = username[1:]
-    return username.strip()
+        return username[1:]
+    return username
 
 def normaliser_nombre_followers(nombre_str: str) -> str | None:
     if not isinstance(nombre_str, str):
         return None
     nombre_str_test = nombre_str.strip()
     if not re.match(r"^[\d.,\s]*[kKm]?$", nombre_str_test, re.IGNORECASE):
-        logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_test}' ne correspond pas au format attendu (regex initial).")
+        logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_test}' ne correspond pas au format attendu.")
         return None
 
-    nombre_str_clean_pour_km = nombre_str_test.lower()
-    nombre_str_clean_pour_km = re.sub(r"[\s.,]", "", nombre_str_clean_pour_km)
-    
-    nombre_str_clean_pour_float = nombre_str_test.replace(" ", "")
-    if "," in nombre_str_clean_pour_float and "." in nombre_str_clean_pour_float:
-        if nombre_str_clean_pour_float.rfind(".") < nombre_str_clean_pour_float.rfind(","):
-            nombre_str_clean_pour_float = nombre_str_clean_pour_float.replace(".","")
-            nombre_str_clean_pour_float = nombre_str_clean_pour_float.replace(",",".")
-        else: 
-            nombre_str_clean_pour_float = nombre_str_clean_pour_float.replace(",","")
-    else:
-        nombre_str_clean_pour_float = nombre_str_clean_pour_float.replace(",",".")
-    
-    parts = nombre_str_clean_pour_float.split(".")
-    if len(parts) > 1:
-        nombre_str_clean_pour_float = "".join(parts[:-1]) + "." + parts[-1]
-
+    nombre_str_clean = nombre_str_test.lower().replace(" ", "").replace(".", "").replace(",", "")
     valeur = None
     try:
-        if "k" in nombre_str_clean_pour_km:
-            valeur_km = nombre_str_clean_pour_float.lower().replace("k", "")
-            if not re.match(r"^\d*\.?\d+$", valeur_km):
-                 logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour 	'{valeur_km}' (après nettoyage float)")
-                 return None
-            valeur = str(int(float(valeur_km) * 1000))
-        elif "m" in nombre_str_clean_pour_km:
-            valeur_km = nombre_str_clean_pour_float.lower().replace("m", "")
-            if not re.match(r"^\d*\.?\d+$", valeur_km):
-                 logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour 	'{valeur_km}' (après nettoyage float)")
-                 return None
-            valeur = str(int(float(valeur_km) * 1000000))
+        if "k" in nombre_str_clean:
+            if not re.match(r"^\d+k$", nombre_str_clean):
+                logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour 	'{nombre_str_clean}'")
+                return None
+            valeur = str(int(float(nombre_str_clean.replace("k", "")) * 1000))
+        elif "m" in nombre_str_clean:
+            if not re.match(r"^\d+m$", nombre_str_clean):
+                logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour 	'{nombre_str_clean}'")
+                return None
+            valeur = str(int(float(nombre_str_clean.replace("m", "")) * 1000000))
         else:
-            temp_val = re.sub(r"\D", "", nombre_str_test) 
-            if not temp_val.isdigit():
-                logger.debug(f"normaliser_nombre_followers: 	'{temp_val}' n_est pas un digit après nettoyage complet pour non k/m.")
+            if not nombre_str_clean.isdigit():
+                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n_est pas un digit après nettoyage.")
                 return None
-            if not temp_val:
-                logger.debug(f"normaliser_nombre_followers: Chaine vide pour 	'{nombre_str_test}' après nettoyage non k/m.")
-                return None
-            valeur = str(int(temp_val))
-    except ValueError as e_norm:
-        cleaned_for_log = re.sub(r'\D', '', nombre_str_test)
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_test}' (nettoyé en 	'{nombre_str_clean_pour_float}' ou 	'{cleaned_for_log}'). Erreur: {e_norm}")
+            valeur = str(int(nombre_str_clean))
+    except ValueError:
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_clean}'")
         return None
     return valeur
 
-def identifier_reseau_social(text_ocr: str) -> str:
-    text_ocr_lower = text_ocr.lower()
-    logger.info(f"identifier_reseau_social: Début identification. Texte OCR (premiers 500 chars): {text_ocr_lower[:500]}")
-
-    instagram_keywords = [
-        "instagram", "publications", "followers", "suivi(e)s", "suivis", "suivies", 
-        "profil", "modifier profil", "partager le profil", "story", "stories", "reels", "explorer",
-        "tableau de bord", "voir le tableau de bord", "message", "messages"
-    ]
-    instagram_score = 0
-    for keyword in instagram_keywords:
-        if keyword in text_ocr_lower:
-            instagram_score += 1
-            logger.info(f"identifier_reseau_social: Mot-clé Instagram trouvé: 	'{keyword}'")
-    
-    if "publications" in text_ocr_lower and "followers" in text_ocr_lower and "suivi" in text_ocr_lower:
-        logger.info("identifier_reseau_social: Combinaison spécifique Instagram (publications, followers, suivi) trouvée.")
-        return "instagram"
-    if "instagram" in text_ocr_lower and instagram_score >= 1:
-        logger.info("identifier_reseau_social: Instagram identifié par mot-clé 'instagram' et au moins un autre indicateur.")
-        return "instagram"
-    if instagram_score >= 3:
-        logger.info(f"identifier_reseau_social: Instagram identifié par score élevé ({instagram_score}).")
-        return "instagram"
-
-    twitter_keywords = [
-        "twitter", " x ", "accueil", "explorer", "notifications", "messages", 
-        "abonnements", "abonnés", "profil", "tweets", "retweets", "posts", "communautés",
-        "vérifié", "éditer le profil", "pour vous", "suivis", "listes"
-    ]
-    twitter_score = 0
-    for keyword in twitter_keywords:
-        if keyword in text_ocr_lower:
-            twitter_score += 1
-            logger.info(f"identifier_reseau_social: Mot-clé Twitter/X trouvé: 	'{keyword}'")
-    
-    if "abonnements" in text_ocr_lower and "abonnés" in text_ocr_lower:
-        logger.info("identifier_reseau_social: Combinaison spécifique Twitter/X (abonnements, abonnés) trouvée.")
-        return "twitter"
-    if ("twitter" in text_ocr_lower or " x " in text_ocr_lower) and twitter_score >= 1:
-         logger.info("identifier_reseau_social: Twitter/X identifié par mot-clé 'twitter' ou ' x ' et au moins un autre indicateur.")
-         return "twitter"
-    if twitter_score >= 3:
-        logger.info(f"identifier_reseau_social: Twitter/X identifié par score élevé ({twitter_score}).")
-        return "twitter"
-
-    tiktok_keywords = ["tiktok", "pour toi", "following", "followers", "j_aime", "profil", "messages", "découvrir", "amis", "boîte de réception"]
-    tiktok_score = 0
-    for keyword in tiktok_keywords:
-        if keyword in text_ocr_lower:
-            tiktok_score += 1
-            logger.info(f"identifier_reseau_social: Mot-clé TikTok trouvé: 	'{keyword}'")
-
-    if "tiktok" in text_ocr_lower and tiktok_score >= 1:
-        logger.info("identifier_reseau_social: TikTok identifié par mot-clé 'tiktok' et au moins un autre indicateur.")
-        return "tiktok"
-    if tiktok_score >= 3: 
-        logger.info(f"identifier_reseau_social: TikTok identifié par score élevé ({tiktok_score}).")
-        return "tiktok"
-        
-    facebook_keywords = ["facebook", "fil d_actualité", "stories", "reels", "profil", "amis", "j_aime", "commenter", "partager"]
-    facebook_score = 0
-    for keyword in facebook_keywords:
-        if keyword in text_ocr_lower:
-            facebook_score += 1
-            logger.info(f"identifier_reseau_social: Mot-clé Facebook trouvé: 	'{keyword}'")
-            
-    if "facebook" in text_ocr_lower and facebook_score >= 2:
-        logger.info("identifier_reseau_social: Facebook identifié par mot-clé 'facebook' et au moins un autre indicateur.")
-        return "facebook"
-    if facebook_score >= 3:
-        logger.info(f"identifier_reseau_social: Facebook identifié par score élevé ({facebook_score}).")
-        return "facebook"
-
-    logger.warning(f"identifier_reseau_social: Réseau non identifié. Scores -> IG:{instagram_score}, TW:{twitter_score}, TK:{tiktok_score}, FB:{facebook_score}. OCR: {text_ocr_lower[:200]}")
-    return "inconnu"
-
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
     try:
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Début --- N_ann: {len(text_annotations) if text_annotations else 0}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Début de l_extraction spatiale ---")
         keyword_annotations_list = []
         number_annotations_list = []
 
         if not text_annotations:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucune annotation.")
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucune annotation de texte fournie.")
             return None
         
-        for i, annotation in enumerate(text_annotations[1:]): 
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre total d_annotations reçues: {len(text_annotations)}")
+        if len(text_annotations) > 1:
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Premières annotations (description et position Y moyenne):")
+            for i, annotation in enumerate(text_annotations[1:6]): 
+                try:
+                    if hasattr(annotation, 'description') and hasattr(annotation, 'bounding_poly') and hasattr(annotation.bounding_poly, 'vertices') and len(annotation.bounding_poly.vertices) >=4:
+                        vertices = annotation.bounding_poly.vertices
+                        avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
+                        logger.info(f"  - Ann {i+1}: 	'{annotation.description}' (avg_y: {avg_y_log})")
+                    else:
+                        logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i+1} malformée: {annotation}")
+                except Exception as e_log_ann:
+                    logger.error(f"extraire_followers_spatial ({reseau_nom}): Erreur lors du logging de l_annotation initiale {i+1}: {e_log_ann}. Annotation: {annotation}")
+
+        for i, annotation in enumerate(text_annotations[1:]):
             try:
                 if not hasattr(annotation, 'description') or not hasattr(annotation, 'bounding_poly'):
+                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} n_a pas les attributs requis (description/bounding_poly), ignorée. Contenu: {annotation}")
                     continue
-                text_desc = annotation.description 
-                text_lower = text_desc.lower().strip()
+
+                text = annotation.description.lower().strip()
+                
                 if not hasattr(annotation.bounding_poly, 'vertices') or len(annotation.bounding_poly.vertices) < 4:
+                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} ('{text}') n_a pas de bounding_poly.vertices valides, ignorée.")
                     continue
-                
+                    
                 vertices = annotation.bounding_poly.vertices
-                avg_y = sum(v.y for v in vertices) / 4
-                avg_x = sum(v.x for v in vertices) / 4
-                min_x, max_x = min(v.x for v in vertices), max(v.x for v in vertices)
-                min_y, max_y = min(v.y for v in vertices), max(v.y for v in vertices)
+                avg_y = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
+                avg_x = (vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) / 4
+                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: 	'{text}' (avg_y={avg_y}, avg_x={avg_x})")
 
-                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Ann {i}: '{text_desc}' (y:{avg_y:.0f}, x:{avg_x:.0f})")
-
-                if any(keyword.lower() in text_lower for keyword in mots_cles_specifiques):
-                    keyword_annotations_list.append({
-                        "text": text_lower, "avg_y": avg_y, "avg_x": avg_x, 
-                        "min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y, 
-                        "annotation": annotation
-                    })
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ: '{text_lower}' y:{avg_y:.0f}, x:{avg_x:.0f}")
+                if any(keyword.lower() in text for keyword in mots_cles_specifiques):
+                    keyword_annotations_list.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
+                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	'{text}' à y={avg_y}, x={avg_x}")
                 
-                if re.search(r"\d", text_desc) and not re.fullmatch(r"\d{1,2}:\d{2}", text_desc):
-                    if re.match(r"^[\d.,\s]+[kKm]?$", text_desc.replace(" ", ""), re.IGNORECASE): 
-                        nombre_normalise_test = normaliser_nombre_followers(text_desc) 
-                        if nombre_normalise_test:
-                            number_annotations_list.append({
-                                "text": text_desc, "normalized": nombre_normalise_test, 
-                                "avg_y": avg_y, "avg_x": avg_x, "min_x": min_x, "max_x": max_x, 
-                                "min_y": min_y, "max_y": max_y, "annotation": annotation
-                            })
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE: '{text_desc}' (norm: {nombre_normalise_test}) y:{avg_y:.0f}, x:{avg_x:.0f}")
+                if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
+                    nombre_normalise_test = normaliser_nombre_followers(text)
+                    if nombre_normalise_test:
+                        if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
+                            number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
+                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: 	'{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
                         else:
-                            logger.debug(f"extraire_followers_spatial ({reseau_nom}): '{text_desc}' non normalisable.")
+                            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	'{text}' ignoré (format heure).")
                     else:
-                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): '{text_desc}' non format num k/m.")
+                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): 	'{text}' non normalisable en nombre.")
+                else:
+                    logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	'{text}' ne semble pas être un nombre (basé sur regex), ignorée pour la normalisation.")
             except Exception as e_loop_ann:
-                desc_log = annotation.description if hasattr(annotation, 'description') else 'N/A'
-                logger.error(f"extraire_followers_spatial ({reseau_nom}): ERR loop ann {i} ('{desc_log}'): {e_loop_ann}")
+                logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR INATTENDUE lors du traitement de l_annotation {i}: {e_loop_ann}")
+                logger.error(f"extraire_followers_spatial ({reseau_nom}): Annotation problématique: {annotation}")
                 logger.error(traceback.format_exc())
                 continue 
-        
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres AVANT fusion: {len(number_annotations_list)}")
-        for idx, num_ann_log in enumerate(number_annotations_list):
-            logger.info(f"  Pre-fusion Num {idx}: '{num_ann_log['text']}' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}")
-        
-        if len(number_annotations_list) > 1:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Tentative fusion v2 ({len(number_annotations_list)} nombres)")
-            number_annotations_list.sort(key=lambda ann: (ann["avg_y"], ann["avg_x"])) 
-            
-            merged_numbers_accumulator = []
-            processed_indices_merge = set()
 
-            for i in range(len(number_annotations_list)):
-                if i in processed_indices_merge:
-                    continue
-
-                current_ann = number_annotations_list[i]
-                current_group_text_parts = [current_ann["text"]]
-                current_group_normalized_parts = [current_ann["normalized"]]
-                current_group_min_x = current_ann["min_x"]
-                current_group_max_x = current_ann["max_x"]
-                current_group_min_y = current_ann["min_y"]
-                current_group_max_y = current_ann["max_y"]
-                current_group_avg_y = current_ann["avg_y"]
-                current_group_indices = {i}
-                last_ann_in_current_group = current_ann
-
-                for j in range(i + 1, len(number_annotations_list)):
-                    if j in processed_indices_merge:
-                        continue
-                    
-                    next_ann_to_try = number_annotations_list[j]
-                    y_diff = abs(last_ann_in_current_group["avg_y"] - next_ann_to_try["avg_y"])
-                    x_gap = next_ann_to_try["min_x"] - last_ann_in_current_group["max_x"]
-                    
-                    if y_diff < 20 and -10 <= x_gap < 35:
-                        logger.info(f"    Fusion?: '{''.join(current_group_text_parts)}' + '{next_ann_to_try['text']}' (y_d:{y_diff:.0f}, x_g:{x_gap:.0f})")
-                        potential_merged_text = " ".join(current_group_text_parts + [next_ann_to_try["text"]])
-                        potential_normalized = normaliser_nombre_followers(potential_merged_text)
-                        
-                        if potential_normalized and len(potential_normalized) >= len(current_group_normalized_parts[-1]):
-                            current_group_text_parts.append(next_ann_to_try["text"])
-                            current_group_normalized_parts.append(next_ann_to_try["normalized"])
-                            current_group_max_x = max(current_group_max_x, next_ann_to_try["max_x"])
-                            current_group_min_y = min(current_group_min_y, next_ann_to_try["min_y"])
-                            current_group_max_y = max(current_group_max_y, next_ann_to_try["max_y"])
-                            current_group_indices.add(j)
-                            last_ann_in_current_group = next_ann_to_try
-                            logger.info(f"      -> Fusionné: '{next_ann_to_try['text']}' -> Grp: '{''.join(current_group_text_parts)}' (norm: {potential_normalized})")
-                        else:
-                            logger.info(f"      -> Fusion REFUSÉE ('{potential_merged_text}' norm: {potential_normalized})")
-                            break 
-                
-                final_merged_text_for_group = " ".join(current_group_text_parts)
-                final_normalized_text_for_group = normaliser_nombre_followers(final_merged_text_for_group)
-
-                if final_normalized_text_for_group:
-                    merged_numbers_accumulator.append({
-                        "text": final_merged_text_for_group,
-                        "normalized": final_normalized_text_for_group,
-                        "avg_y": current_group_avg_y, 
-                        "avg_x": (current_group_min_x + current_group_max_x) / 2,
-                        "min_x": current_group_min_x, "max_x": current_group_max_x,
-                        "min_y": current_group_min_y, "max_y": current_group_max_y,
-                        "annotation": current_ann["annotation"]
-                    })
-                    processed_indices_merge.update(current_group_indices)
-                    logger.info(f"  => Groupe final: '{final_merged_text_for_group}' (norm: {final_normalized_text_for_group}), idx: {current_group_indices}")
-                else:
-                    merged_numbers_accumulator.append(current_ann)
-                    processed_indices_merge.add(i)
-                    logger.info(f"  => Original conservé (fusion non norm): '{current_ann['text']}'")
-            
-            for k_idx, k_ann in enumerate(number_annotations_list):
-                if k_idx not in processed_indices_merge:
-                    merged_numbers_accumulator.append(k_ann)
-                    logger.warning(f"  => Original non fusionné (sécurité): '{k_ann['text']}'")
-            
-            number_annotations_list = merged_numbers_accumulator
-        
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres APRÈS fusion v2: {len(number_annotations_list)}")
-        for idx, num_ann_log in enumerate(number_annotations_list):
-            logger.info(f"  Post-fusion Num {idx}: '{num_ann_log['text']}' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}")
-
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nb mots-clés: {len(keyword_annotations_list)}, Nb nombres (post-fusion): {len(number_annotations_list)}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations.")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés: {len(number_annotations_list)}")
+        for idx, na in enumerate(number_annotations_list):
+            logger.info(f"  - Nombre {idx}: {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}")
 
         if not keyword_annotations_list:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé followers.")
-            if number_annotations_list:
-                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0").replace(" ","")), reverse=True)
-                if number_annotations_list:
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Plus grand nombre: {number_annotations_list[0]['normalized']}")
-                    return number_annotations_list[0]['normalized']
-            return None
-
-        best_candidate_num = None
-        min_score = float('inf')
-        candidate_details_log = []
-
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche meilleur candidat.")
-        for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Pour mot-clé: '{kw_ann['text']}' y:{kw_ann['avg_y']:.0f}, x:{kw_ann['avg_x']:.0f}")
-            for num_ann in number_annotations_list:
-                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] 
-                x_diff = abs(num_ann['avg_x'] - kw_ann['avg_x'])
-                
-                logger.debug(f"    - Comp avec num: '{num_ann['text']}' (norm: {num_ann['normalized']}) y:{num_ann['avg_y']:.0f}. y_d:{y_diff:.2f}, x_d:{x_diff:.2f}")
-
-                score = float('inf')
-                if -20 < y_diff < 100 and x_diff < 200: 
-                    score = abs(y_diff) + x_diff * 0.5 
-                    logger.debug(f"      Candidat (sous/proche Y): Score {score:.2f}")
-                
-                if abs(y_diff) < 40 and x_diff < 300: 
-                    current_score_side = x_diff + abs(y_diff) * 0.8 
-                    logger.debug(f"      Candidat (latéral): Score {current_score_side:.2f}")
-                    if current_score_side < score: score = current_score_side
-                
-                candidate_details_log.append({'text': num_ann['text'], 'norm': num_ann['normalized'], 'score': score, 'kw': kw_ann['text']})
-                if score < min_score:
-                    min_score = score
-                    best_candidate_num = num_ann['normalized']
-                    logger.info(f"      NOUVEAU MEILLEUR: '{num_ann['text']}' (norm: {num_ann['normalized']}), Score: {score:.2f} (kw '{kw_ann['text']}')")
-
-        if candidate_details_log:
-            candidate_details_log.sort(key=lambda x: x['score'])
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Top 3 candidats ---")
-            for cand_log in candidate_details_log[:3]:
-                logger.info(f"    Score: {cand_log['score']:.2f}, Num: '{cand_log['norm']}' ('{cand_log['text']}'), Kw: '{cand_log['kw']}'")
-
-        if best_candidate_num:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): MEILLEUR FINAL: {best_candidate_num} score {min_score:.2f}")
-            return best_candidate_num
-        else:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat followers trouvé.")
-            return None
-
-    except Exception as e_spatial:
-        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR MAJEURE: {e_spatial}")
-        logger.error(traceback.format_exc())
-        return None
-
-def extraire_username(text_annotations, reseau: str, full_text_ocr: str) -> str | None:
-    logger.info(f"extraire_username: Début pour réseau: {reseau}")
-    if not text_annotations:
-        logger.warning("extraire_username: Aucune annotation.")
-        return None
-
-    username_found = None
-    # full_text_lower = full_text_ocr.lower() # full_text_ocr non utilisé pour l'instant
-
-    known_network_handles = KNOWN_HANDLES.get(reseau, []) 
-
-    # Tentative 1: Chercher un @username proéminent
-    for ann in text_annotations[1:]:
-        desc = ann.description
-        if desc.startswith("@") and len(desc) > 1:
-            # Vérifier si ce @handle est connu pour ce réseau
-            potential_match = get_close_matches(desc[1:].lower(), [h.lower() for h in known_network_handles], n=1, cutoff=0.85)
-            if potential_match:
-                username_found = "@" + potential_match[0]
-                logger.info(f"extraire_username ({reseau}): Trouvé via @ et KNOWN_HANDLES: {username_found}")
-                return corriger_username(username_found, reseau)
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
+            # Fallback simple: si 3 nombres sont alignés horizontalement, prendre celui du milieu
+            if len(number_annotations_list) >= 3:
+                # Trier par X pour trouver les 3 nombres principaux (Suivis, Followers, J'aime/Posts)
+                number_annotations_list.sort(key=lambda ann: ann['avg_x'])
+                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations_list]}")
+                # Vérifier si les 3 premiers sont à peu près sur la même ligne Y
+                if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
+                    abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
+                    logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]['normalized']}")
+                    return number_annotations_list[1]['normalized']
+                else:
+                    logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Les 3 premiers nombres ne sont pas alignés en Y.")
             else:
-                # Si pas dans known_handles, on le prend quand même s'il est plausible
-                if len(desc) > 3 and not any(char in desc for char in " <>[]{}()"): # Éviter les faux positifs
-                    username_found = desc
-                    logger.info(f"extraire_username ({reseau}): Trouvé via @ (non listé): {username_found}")
-                    return corriger_username(username_found, reseau)
+                logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Pas assez de nombres ({len(number_annotations_list)}) pour le fallback des 3 nombres.")
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Conditions de fallback non remplies.")
+            return None
 
-    # Tentative 2: Utiliser KNOWN_HANDLES pour rechercher des correspondances partielles dans le texte
-    # Utile si le @ est manquant ou mal lu
-    for ann in text_annotations[1:]:
-        desc_lower = ann.description.lower()
-        if len(desc_lower) < 3: continue # Éviter les textes trop courts
+        best_candidate = None
+        min_distance = float('inf')
 
-        # Chercher une correspondance exacte ou proche d'un handle connu
-        potential_matches = get_close_matches(desc_lower, [h.lower() for h in known_network_handles], n=1, cutoff=0.8)
-        if potential_matches:
-            username_found = potential_matches[0] # Retourne le handle connu, pas le texte OCR brut
-            logger.info(f"extraire_username ({reseau}): Trouvé via KNOWN_HANDLES (sans @): {username_found}")
-            return corriger_username(username_found, reseau)
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé.")
+        for kw_ann in keyword_annotations_list:
+            logger.info(f"  - Analyse pour mot-clé: 	'{kw_ann['text']}' à y={kw_ann['avg_y']}")
+            for num_ann in number_annotations_list:
+                # Le nombre doit être en dessous ou très proche en Y, et aligné en X
+                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] # Positif si le nombre est en dessous
+                x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
+                
+                logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
 
-    # Logique spécifique si les méthodes génériques échouent
-    if reseau == "instagram":
-        y_ref = float('inf')
-        potential_usernames_above_stats = []
-        for ann in text_annotations[1:]:
-            if any(kw in ann.description.lower() for kw in ["publications", "followers", "suivi(e)s"]):
-                if hasattr(ann.bounding_poly, 'vertices') and ann.bounding_poly.vertices:
-                    y_ref = min(y_ref, ann.bounding_poly.vertices[0].y)
+                # Critères: nombre en dessous du mot-clé (y_diff > -10, tolérance pour léger décalage au-dessus)
+                # et assez proche horizontalement (x_diff < 100, ajustable)
+                if y_diff > -25 and y_diff < 100 and x_diff < 150: 
+                    distance = (y_diff**2 + x_diff**2)**0.5 # Simple distance euclidienne
+                    logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
+                    if distance < min_distance:
+                        try:
+                            # Pour Instagram/Twitter, le nombre de followers est souvent le plus grand des 3 (Suivis, Followers, Posts)
+                            # ou celui associé directement au mot-clé "followers" ou "abonnés"
+                            # On peut être moins strict sur la valeur minimale que pour TikTok
+                            min_distance = distance
+                            best_candidate = num_ann['normalized']
+                            logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour '{kw_ann['text']}'): {best_candidate} (distance: {min_distance:.2f})")
+                        except ValueError:
+                            logger.warning(f"      Impossible de convertir 	'{num_ann['normalized']}' en entier pour la comparaison.")
+                    else:
+                        logger.debug(f"      Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
+                else:
+                    logger.debug(f"      Critères de position (y_diff > -25 ET y_diff < 100 ET x_diff < 150) non remplis.")
         
-        if y_ref != float('inf'):
-            for ann in text_annotations[1:]:
-                ann_text_lower = ann.description.lower()
-                if hasattr(ann.bounding_poly, 'vertices') and ann.bounding_poly.vertices and ann.bounding_poly.vertices[3].y < y_ref - 5 and \
-                   not any(kw in ann_text_lower for kw in ["publications", "followers", "suivi(e)s", "profil", "modifier", "message", "story", "reels"]) and \
-                   len(ann.description) > 2 and not ann.description.isdigit() and "instagram" not in ann_text_lower:
-                    potential_usernames_above_stats.append(ann.description)
-            
-            if potential_usernames_above_stats:
-                potential_usernames_above_stats.sort(key=len, reverse=True)
-                username_found = potential_usernames_above_stats[0]
-                logger.info(f"extraire_username (Instagram fallback): Trouvé au-dessus des stats: {username_found}")
-                return corriger_username(username_found, reseau)
-
-    elif reseau == "twitter":
-        y_ref_twitter = float('inf')
-        potential_usernames_twitter = []
-        for ann in text_annotations[1:]:
-            if any(kw in ann.description.lower() for kw in ["abonnements", "abonnés"]):
-                if hasattr(ann.bounding_poly, 'vertices') and ann.bounding_poly.vertices:
-                    y_ref_twitter = min(y_ref_twitter, ann.bounding_poly.vertices[0].y)
-        
-        if y_ref_twitter != float('inf'):
-            for ann in text_annotations[1:]:
-                ann_text_lower = ann.description.lower()
-                if hasattr(ann.bounding_poly, 'vertices') and ann.bounding_poly.vertices and ann.bounding_poly.vertices[3].y < y_ref_twitter - 5 and \
-                   not any(kw in ann_text_lower for kw in ["abonnements", "abonnés", "profil", "éditer", "notifications", "messages"]) and \
-                   len(ann.description) > 2 and not ann.description.isdigit() and "twitter" not in ann_text_lower and " x " not in ann_text_lower:
-                    potential_usernames_twitter.append(ann.description)
-            
-            if potential_usernames_twitter:
-                potential_usernames_twitter.sort(key=len, reverse=True)
-                username_found = potential_usernames_twitter[0]
-                logger.info(f"extraire_username (Twitter fallback): Trouvé au-dessus des stats (sans @): {username_found}")
-                return corriger_username(username_found, reseau)
-
-    if not username_found:
-        logger.warning(f"extraire_username: Nom d_utilisateur non trouvé pour {reseau}.")
-    return username_found
-
-def get_text_from_image_vision(image_bytes: bytes) -> tuple[str | None, list | None]:
-    try:
-        image = vision.Image(content=image_bytes)
-        response = vision_client.text_detection(image=image)
-        texts = response.text_annotations
-
-        if response.error.message:
-            logger.error(f"Erreur de l_API Google Vision: {response.error.message}")
-            return None, None
-        
-        if texts:
-            logger.info(f"get_text_from_image_vision: Texte extrait. 1er élém: {texts[0].description[:100]}...")
-            return texts[0].description, texts
+        if best_candidate:
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de followers final extrait: {best_candidate}")
+            return best_candidate
         else:
-            logger.warning("get_text_from_image_vision: Aucun texte détecté.")
-            return None, None
-    except Exception as e:
-        logger.error(f"Erreur dans get_text_from_image_vision: {e}")
-        logger.error(traceback.format_exc())
-        return None, None
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
+            # Fallback final: si des nombres ont été trouvés mais aucun mot-clé n_a aidé, prendre le plus grand nombre détecté
+            if number_annotations_list:
+                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
+                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na['text'] for na in number_annotations_list]}")
+                if number_annotations_list and number_annotations_list[0]['normalized']:
+                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]['normalized']}")
+                     return number_annotations_list[0]['normalized']
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Aucun nombre à retourner.")
+            return None
 
-def ajouter_donnees_sheet(date_heure: str, operateur: str, reseau_social: str, nom_utilisateur: str, nb_followers: str) -> bool:
-    try:
-        row = [date_heure, operateur, reseau_social, nom_utilisateur, nb_followers]
-        sheet.append_row(row)
-        logger.info(f"Données ajoutées à Google Sheets: {row}")
-        return True
-    except gspread.exceptions.APIError as e_gspread_api:
-        logger.error(f"Erreur API Google Sheets lors de l_ajout de données: {e_gspread_api}")
-        logger.error(f"Détails de l_erreur API: {e_gspread_api.response.text if e_gspread_api.response else 'Pas de réponse détaillée'}")
-        logger.error(traceback.format_exc())
-        return False
-    except Exception as e:
-        logger.error(f"Erreur inconnue lors de l_ajout à Google Sheets: {e}")
-        logger.error(traceback.format_exc())
-        return False
-
-async def send_telegram_message_to_general_topic(bot: Bot, message_text: str):
-    try:
-        if not TELEGRAM_GROUP_ID or not TELEGRAM_GENERAL_TOPIC_THREAD_ID:
-            logger.error("TELEGRAM_GROUP_ID ou TELEGRAM_GENERAL_TOPIC_THREAD_ID non configuré. Message non envoyé.")
-            return
-        
-        chat_id_to_send = int(TELEGRAM_GROUP_ID)
-        thread_id_to_send = int(TELEGRAM_GENERAL_TOPIC_THREAD_ID)
-        
-        logger.info(f"Envoi du message au sujet General (ChatID: {chat_id_to_send}, ThreadID: {thread_id_to_send}): '{message_text[:100]}...' ")
-        await bot.send_message(chat_id=chat_id_to_send, text=message_text, message_thread_id=thread_id_to_send)
-        logger.info("Message envoyé avec succès au sujet General.")
-    except ValueError as ve:
-        logger.error(f"Erreur de valeur pour TELEGRAM_GROUP_ID ou TELEGRAM_GENERAL_TOPIC_THREAD_ID: {ve}. Assurez-vous qu_ils sont des entiers valides.")
-    except Exception as e:
-        logger.error(f"Erreur lors de l_envoi du message Telegram au sujet General: {e}")
-        logger.error(traceback.format_exc())
+    except Exception as e_global_spatial:
+        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}")
+        logger.error(traceback.format_exc()) # Log du traceback complet
+        return None # Retourne None pour ne pas planter handle_photo
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.photo:
-        return
+    logger.info("--- Entrée dans handle_photo ---")
+    assistant = "INCONNU"
+    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    message_status_general = None 
+    donnees_extraites_ok = False
+    reply_message_exists_for_error_handling = False
+    topic_name_for_error_handling = ""
+    username = "Non trouvé"
+    reseau = "instagram" 
+    abonnés = None
+    action_tentee = False
 
-    # Vérifier si le message provient d_un sujet "SUIVI..."
-    if update.message.is_topic_message and update.message.reply_to_message and \
-       update.message.reply_to_message.forum_topic_created and \
-       update.message.reply_to_message.forum_topic_created.name.startswith("SUIVI"):
-        topic_name = update.message.reply_to_message.forum_topic_created.name
-        logger.info(f"Photo reçue dans le sujet: {topic_name}")
-    else:
-        logger.info("Photo reçue, mais pas dans un sujet pertinent (commençant par SUIVI). Ignorée.")
-        return
-
-    user = update.effective_user
-    operateur = user.username if user.username else user.first_name
-    date_heure = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    file_id = update.message.photo[-1].file_id
     try:
-        new_file = await context.bot.get_file(file_id)
-        file_path = new_file.file_path
-        
-        # Télécharger l_image en mémoire
-        image_bytes_io = io.BytesIO()
-        await new_file.download_to_memory(out=image_bytes_io)
-        image_bytes = image_bytes_io.getvalue()
-        image_bytes_io.close()
-        logger.info(f"Image téléchargée (taille: {len(image_bytes)} bytes).")
-
-        # Traitement OCR
-        full_text_ocr, text_annotations = get_text_from_image_vision(image_bytes)
-
-        if not full_text_ocr or not text_annotations:
-            msg = f"ÉCHEC OCR pour {operateur} le {date_heure}: Pas de texte détecté."
-            logger.warning(msg)
-            await send_telegram_message_to_general_topic(context.bot, msg)
+        message = update.message
+        if not message or not message.photo:
+            logger.info("handle_photo: Message None ou sans photo. Aucune action.")
             return
 
-        reseau_social = identifier_reseau_social(full_text_ocr)
-        logger.info(f"Réseau identifié: {reseau_social}")
+        reply = message.reply_to_message
+        if not reply or not hasattr(reply, "forum_topic_created") or not reply.forum_topic_created:
+            logger.info("handle_photo: Pas une réponse à un topic valide. Aucune action.")
+            return
+        
+        action_tentee = True
+        reply_message_exists_for_error_handling = True
+        topic_name = reply.forum_topic_created.name
+        topic_name_for_error_handling = topic_name
 
-        mots_cles_followers = {
-            "instagram": ["followers", "abonnés"],
-            "twitter": ["abonnés", "followers"],
-            "tiktok": ["followers", "abonnés"],
-            "facebook": ["amis", "j_aime", "followers"]
-        }.get(reseau_social, ["followers", "abonnés"]) # Fallback
+        if not topic_name.startswith("SUIVI "):
+            logger.info(f"handle_photo: Nom du topic 	'{topic_name}' non conforme. Aucune action.")
+            return
+        
+        assistant = topic_name.replace("SUIVI ", "").strip().upper()
+        logger.info(f"handle_photo: Assistant extrait: 	'{assistant}'")
+        message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
 
-        nom_utilisateur = extraire_username(text_annotations, reseau_social, full_text_ocr)
-        nb_followers = extraire_followers_spatial(text_annotations, mots_cles_followers, reseau_social)
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        img_bytes_io = io.BytesIO()
+        await file.download_to_memory(img_bytes_io)
+        img_bytes_io.seek(0)
+        img_content = img_bytes_io.read()
 
-        logger.info(f"Résultats extraction: User='{nom_utilisateur}', Followers='{nb_followers}'")
+        image = Image.open(io.BytesIO(img_content))
+        width, height = image.size
+        cropped_image = image.crop((0, 0, width, int(height * 0.4)))
+        enhanced_image = ImageOps.autocontrast(cropped_image)
+        byte_arr = io.BytesIO()
+        enhanced_image.save(byte_arr, format='PNG')
+        content_vision = byte_arr.getvalue()
 
-        if nom_utilisateur and nb_followers:
-            if ajouter_donnees_sheet(date_heure, operateur, reseau_social, nom_utilisateur, nb_followers):
-                msg = f"SUCCÈS pour {operateur} ({date_heure}):\nRéseau: {reseau_social}\nCompte: {nom_utilisateur}\nFollowers: {nb_followers}"
-                logger.info(msg)
-                await send_telegram_message_to_general_topic(context.bot, msg)
-            else:
-                msg = f"ÉCHEC Enregistrement Google Sheet pour {operateur} ({date_heure}):\nRéseau: {reseau_social}, Compte: {nom_utilisateur}, Followers: {nb_followers}"
-                logger.error(msg)
-                await send_telegram_message_to_general_topic(context.bot, msg)
+        image_vision = vision.Image(content=content_vision)
+        response = vision_client.text_detection(image=image_vision)
+        texts_annotations_vision = response.text_annotations
+
+        if response.error.message:
+            logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
+            return
+
+        ocr_text_full = texts_annotations_vision[0].description if texts_annotations_vision and len(texts_annotations_vision) > 0 else ""
+        logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères):\n{ocr_text_full[:500]}")
+
+        if not ocr_text_full:
+            logger.warning("handle_photo: OCR n_a retourné aucun texte.")
+            return
+
+        # Identification du réseau
+        # Amélioration de la détection de réseau
+        ocr_lower = ocr_text_full.lower()
+        if "tiktok" in ocr_lower or "j_aime" in ocr_lower: # "j'aime" est assez spécifique à TikTok
+            reseau = "tiktok"
+        elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnement" in ocr_lower: # "Abonnements" est commun sur Twitter
+            reseau = "twitter"
+        elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
+            reseau = "instagram"
+        elif "threads" in ocr_lower:
+            reseau = "threads"
+        elif "beacons.ai" in ocr_lower: # Souvent utilisé pour des liens Instagram/Twitter
+            if "twitter" in ocr_lower: reseau = "twitter"
+            else: reseau = "instagram" # Par défaut si beacons.ai mais pas de mention claire de Twitter
+        else: 
+            reseau = "instagram" 
+            logger.info("Réseau non clairement identifié, par défaut Instagram.")
+        logger.info(f"handle_photo: Réseau identifié: {reseau}")
+
+        usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
+        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
+        username = "Non trouvé"
+        cleaned_usernames = [re.sub(r"[^a-zA-Z0-9_.-]", "", u).lower() for u in usernames_found]
+        for u_cleaned in cleaned_usernames:
+            if u_cleaned in [h.lower() for h in reseau_handles]:
+                username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
+                if username != "Non trouvé": break
+        if username == "Non trouvé":
+            for u in usernames_found:
+                matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
+                if matches: username = matches[0]; break
+        if username == "Non trouvé" and usernames_found: username = usernames_found[0]
+        urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text_full, re.IGNORECASE)
+        if username == "Non trouvé" and urls:
+            for _, u_from_url in urls:
+                match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
+                if match_url: username = match_url[0]; break
+                if username == "Non trouvé": username = u_from_url
+        username = corriger_username(username, reseau)
+        logger.info(f"🕵️ Username final : 	'{username}' (réseau : {reseau})")
+
+        abonnés = None
+        if reseau == "tiktok":
+            mots_cles_tiktok = ["followers", "abonnés", "abonné", "fans", "abos"]
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, "tiktok")
+        elif reseau == "instagram":
+            mots_cles_instagram = ["followers", "abonnés", "abonné", "suivi(e)s", "suivis"]
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, "instagram")
+        elif reseau == "twitter":
+            mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"] # "Abonnements" pour le nombre de personnes suivies par le compte, "Abonnés" pour les followers
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, "twitter")
+        elif reseau == "threads":
+             mots_cles_threads = ["followers", "abonnés", "abonné"]
+             abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, "threads")
+        else: # Fallback générique si le réseau est mal identifié mais qu_on tente quand même
+            mots_cles_generiques = ["followers", "abonnés", "abonné", "fans", "suivi(e)s", "suivis"]
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau})")
+
+        logger.info(f"handle_photo: Abonnés extraits ({reseau}): {abonnés}")
+
+        if not username or username == "Non trouvé" or not abonnés:
+            logger.warning(f"Données incomplètes: Username ('{username}') ou Abonnés ('{abonnés}') pour {reseau}.")
+            donnees_extraites_ok = False
         else:
-            msg = f"ÉCHEC Extraction pour {operateur} ({date_heure}):\nRéseau: {reseau_social}, Compte: {nom_utilisateur if nom_utilisateur else 'Non trouvé'}, Followers: {nb_followers if nb_followers else 'Non trouvé'}. OCR: {full_text_ocr[:200]}..."
-            logger.warning(msg)
-            await send_telegram_message_to_general_topic(context.bot, msg)
+            donnees_extraites_ok = True
 
+        if message.message_id in already_processed:
+            logger.info(f"⚠️ Message ID {message.message_id} déjà traité, on ignore.")
+            return
+        already_processed.add(message.message_id)
+
+        if donnees_extraites_ok:
+            username_to_sheet = f"@{username}"
+            abonnés_to_sheet = str(abonnés)
+            row = [today, assistant, reseau, username_to_sheet, abonnés_to_sheet, ""]
+            try:
+                sheet.append_row(row)
+                logger.info("handle_photo: Ligne ajoutée à Google Sheets.")
+                message_status_general = f"🤖 {today} - {assistant} - ✅ 1 compte détecté et ajouté ✅"
+            except Exception as e_sheet:
+                logger.error(f"handle_photo: Erreur lors de l_ajout à Google Sheets: {e_sheet}")
+                logger.error(traceback.format_exc())
+                message_status_general = f"🤖 {today} - {assistant} - ⚠️ Erreur écriture Sheets ⚠️"
+        
     except Exception as e:
-        error_msg = f"Erreur MAJEURE dans handle_photo pour {operateur} le {date_heure}: {e}"
-        logger.error(error_msg)
+        logger.error("❌ Erreur globale dans handle_photo")
         logger.error(traceback.format_exc())
-        await send_telegram_message_to_general_topic(context.bot, error_msg)
+        assistant_nom_erreur = assistant
+        if assistant == "INCONNU" and reply_message_exists_for_error_handling and topic_name_for_error_handling.startswith("SUIVI "):
+            assistant_nom_erreur = topic_name_for_error_handling.replace("SUIVI ", "").strip().upper()
+        message_status_general = f"🤖 {today} - {assistant_nom_erreur} - ❌ Analyse OCR impossible ❌"
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    # Ici, vous pourriez vouloir informer l_utilisateur ou un administrateur de l_erreur.
-    # Par exemple, envoyer un message à un chat spécifique.
+    finally:
+        if action_tentee and message_status_general:
+            logger.info(f"Message à envoyer au General: {message_status_general}")
+            try:
+                await bot.send_message(chat_id=GROUP_ID, text=message_status_general)
+                logger.info("Message de statut envoyé au sujet General.")
+            except Exception as e_send_general:
+                logger.error(f"Impossible d_envoyer le message de statut au sujet General: {e_send_general}")
+                logger.error(traceback.format_exc())
+        else:
+            logger.info("Aucune action de traitement d_image n_a été tentée ou aucun message de statut à envoyer.")
+        logger.info("--- Sortie de handle_photo ---")
 
-def main() -> None:
-    if not TOKEN:
-        logger.critical("La variable d_environnement TELEGRAM_BOT_TOKEN n_est pas définie. Arrêt du bot.")
-        return
+from fastapi import FastAPI, Request, HTTPException
+import asyncio
+import uvicorn
 
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_error_handler(error_handler)
+app = FastAPI(lifespan=None)
 
-    logger.info("Bot démarré en mode polling...")
-    application.run_polling()
+@app.on_event("startup")
+async def startup():
+    logger.info("Application startup...")
+    mode_polling = os.getenv("MODE_POLLING", "false").lower()
+    if mode_polling != "true":
+        base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
+        if base_webhook_url:
+            normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
+            logger.info(f"Setting webhook to: {normalized_webhook_url}")
+            await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
+            logger.info("Webhook set.")
+        else:
+            logger.warning("RAILWAY_PUBLIC_URL not set, webhook not configured.")
+    else:
+        logger.info("Mode polling activé, pas de configuration de webhook.")
+
+@app.post("/webhook")
+async def webhook_handler(request: Request):
+    logger.info("--- Entrée dans webhook_handler ---")
+    try:
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        if update.message and update.message.photo:
+            context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
+            await handle_photo(update, context)
+        else:
+            logger.info("webhook_handler: Message reçu sans photo, ignoré.")
+            
+        return {"status": "ok"}
+    except json.JSONDecodeError:
+        logger.error("Error decoding JSON from webhook")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as e:
+        logger.error("Error processing webhook")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        logger.info("--- Sortie de webhook_handler ---")
 
 if __name__ == "__main__":
-    main()
-
+    mode_polling = os.getenv("MODE_POLLING", "false").lower()
+    if mode_polling == "true":
+        logger.info("Lancement en mode polling...")
+        application = Application.builder().token(TOKEN).build()
+        application.add_handler(MessageHandler(filters.PHOTO & (~filters.COMMAND), handle_photo))
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    else:
+        logger.info("Lancement en mode webhook avec Uvicorn (localement)...")
+        port = int(os.getenv("PORT", 8000))
+        uvicorn.run(app, host="0.0.0.0", port=port)
