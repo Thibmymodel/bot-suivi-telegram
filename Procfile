@@ -1,1 +1,2 @@
-web: uvicorn main:app --host 0.0.0.0 --port 8000 --lifespan=on
+web: uvicorn main:app --host 0.0.0.0 --port $PORT --lifespan=on
+worker: node keepalive.js
