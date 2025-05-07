@@ -273,7 +273,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Nombres potentiels AVANT fusion ---")
         for idx, num_ann_log in enumerate(number_annotations_list):
-            logger.info(f"  Pre-fusion Num {idx}: 	'{num_ann_log['text']}' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}"            # Réécriture de la logique de fusion v2
+            logger.info(f"  Pre-fusion Num {idx}: \t'{num_ann_log['text']}\' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}")            # Réécriture de la logique de fusion v2
             if len(number_annotations_list) > 1:
                 logger.info(f"extraire_followers_spatial ({reseau_nom}): Tentative de regroupement de {len(number_annotations_list)} nombres avec logique v2.")
                 number_annotations_list.sort(key=lambda ann: (ann["avg_y"], ann["avg_x"])) # Trier par Y puis par X
