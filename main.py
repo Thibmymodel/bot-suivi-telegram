@@ -554,7 +554,7 @@ def main() -> Application:
     ptb_app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, webhook_handler))
     
     logger.info("Application Telegram initialisée.")
-    return ptb_app
+    return ptb_app.asgi
 
 # Exécuter main() pour initialiser ptb_app au chargement du module
 # Uvicorn cherchera `main:ptb_app` (ou le nom que vous spécifiez dans Procfile, ex: `main:application`)
