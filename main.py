@@ -327,7 +327,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                                 break # Arrêter de fusionner pour ce groupe si la continuité est rompue
                         else:
                             # Si les critères ne sont pas remplis, ne pas fusionner plus loin pour ce groupe avec cet élément
-                            # logger.debug(f"    Critères de fusion non remplis pour 		{next_ann_to_try["text"]}		 avec le groupe actuel (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")
+                            # logger.debug(f"    Critères de fusion non remplis pour 		{next_ann_to_try['text']}		 avec le groupe actuel (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")
                             pass # On pourrait break ici si on veut une contiguïté stricte
                     
                     # Une fois le groupe potentiel formé, le normaliser et l_ajouter
@@ -351,20 +351,17 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     else:
                         # Si la fusion finale du groupe n_est pas normalisable, ajouter l_élément original
                         merged_numbers_accumulator.append(current_ann)
-                        processed_indices_merge.add(i)
-                        logger.info(f"  => Élément original conservé (groupe fusionné non normalisable): 		{current_ann["text"]}		")
-                
+                        processed_indices_merge.add(i                        logger.info(f"  => Élément original conservé (groupe fusionné non normalisable): \t\t{current_ann['text']}\t\t")               
                 # S_assurer que tous les éléments non traités sont ajoutés (ceux qui n_ont formé aucun groupe)
                 for k_idx, k_ann in enumerate(number_annotations_list):
                     if k_idx not in processed_indices_merge:
                         merged_numbers_accumulator.append(k_ann)
-                        logger.warning(f"  => Élément original non fusionné ajouté (sécurité): 		{k_ann["text"]}		")
-                
+                        logger.warning(f"  => Élément original non fusionné ajouté (sécurité): \t\t{k_ann['text']}\t\t")             
                 number_annotations_list = merged_numbers_accumulator
             
             logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres après NOUVELLE logique de fusion v2: {len(number_annotations_list)}")
             for idx, num_ann_log in enumerate(number_annotations_list):
-                logger.info(f"  Post-fusion (logique v2) Num {idx}: 		{num_ann_log["text"]}		 (norm: {num_ann_log["normalized"]}), y:{num_ann_log["avg_y"]:.0f}, x:{num_ann_log["avg_x"]:.0f}")
+                logger.info(f"  Post-fusion (logique v2) Num {idx}: 		{num_ann_log['text']}		 (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}")
 logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres (post-fusion final): {len(number_annotations_list)}")
 
