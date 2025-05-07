@@ -115,9 +115,8 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
                 logger.debug(f"normaliser_nombre_followers: Chaine vide pour 	'{nombre_str_test}' après nettoyage non k/m.")
                 return None
             valeur = str(int(temp_val))
-    except ValueError as e_norm:
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_test}' (nettoyé en 	'{nombre_str_clean_pour_float}' ou 	'{re.sub(r'\D', '', nombre_str_test)}'). Erreur: {e_norm}")
-        return None
+    except ValueError as e_norm:        cleaned_for_log = re.sub(r'\D', '', nombre_str_test)
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de \t'{nombre_str_test}' (nettoyé en \t'{nombre_str_clean_pour_float}' ou \t'{cleaned_for_log}'). Erreur: {e_norm}")       return None
     return valeur
 
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
