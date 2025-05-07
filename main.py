@@ -322,9 +322,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                                 current_group_min_y = min(current_group_min_y, next_ann_to_try["min_y"])
                                 current_group_max_y = max(current_group_max_y, next_ann_to_try["max_y"])
                                 current_group_indices.add(j)
-                                last_ann_in_current_group = next_ann_to_try # Mettre à jour le dernier élément fusionné
-                                logger.info(f"      -> Fusionné: 		{next_ann_to_try["text"]}		 -> Nouveau groupe: 		{"".join(current_group_text_parts)}		 (norm: {potential_normalized})")
-                            else:
+                                last_ann_in_current_group = next_ann_to_try # Mettre à jour le dernier élément fusionn                                logger.info(f"      -> Fusionné: \t\t{next_ann_to_try['text']}\t\t -> Nouveau groupe: \t\t{''.join(current_group_text_parts)}\t\t (norm: {potential_normalized})")                     else:
                                 logger.info(f"      -> Fusion REFUSÉE (normalisation échouée ou non améliorée): 		{potential_merged_text}		 (norm: {potential_normalized})")
                                 break # Arrêter de fusionner pour ce groupe si la continuité est rompue
                         else:
