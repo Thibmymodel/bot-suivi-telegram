@@ -310,9 +310,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                         x_gap = next_ann_to_try["min_x"] - last_ann_in_current_group["max_x"]
                         
                         # Critères de fusion: même ligne (tolérance Y), et X adjacent (petite gap ou léger chevauchement)
-                        if y_diff < 20 and x_gap >= -10 and x_gap < 35: # Tolérance Y de 20px, X gap de -10px à 35px
-                            logger.info(f"    Tentative de fusion: 		{"".join(current_group_text_parts)}		 avec 		{next_ann_to_try["text"]}		 (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")
-                            # Essayer de normaliser la fusion pour voir si elle est valide
+                        if y_diff < 20 and x_gap >= -10 and x_gap < 35: # Tolérance Y de 20px, X gap de -10px à 3                            logger.info(f"    Tentative de fusion: \t\t{''.join(current_group_text_parts)}\t\t avec \t\t{next_ann_to_try['text']}\t\t (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")                         # Essayer de normaliser la fusion pour voir si elle est valide
                             potential_merged_text = " ".join(current_group_text_parts + [next_ann_to_try["text"]])
                             potential_normalized = normaliser_nombre_followers(potential_merged_text)
                             
