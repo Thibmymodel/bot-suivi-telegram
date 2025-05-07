@@ -22,9 +22,8 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-# RAILWAY_PUBLIC_URL n_est plus nécessaire pour le mode polling
 
-# Initialisation Google Sheets
+
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
 if not google_creds_gspread_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
@@ -40,7 +39,6 @@ except Exception as e:
     logger.error(traceback.format_exc())
     exit()
 
-# Initialisation Google Vision AI
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if not google_creds_vision_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
@@ -54,8 +52,6 @@ except Exception as e:
     logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
     logger.error(traceback.format_exc())
     exit()
-
-# bot = Bot(TOKEN) # L_instance de Bot sera créée par l_Application
 
 with open("known_handles.json", "r", encoding="utf-8") as f:
     KNOWN_HANDLES = json.load(f)
@@ -115,9 +111,107 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
             valeur = str(int(temp_val))
     except ValueError as e_norm:
         cleaned_for_log = re.sub(r'\D', '', nombre_str_test)
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de \t'{nombre_str_test}' (nettoyé en \t'{nombre_str_clean_pour_float}' ou \t'{cleaned_for_log}'). Erreur: {e_norm}")
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_test}' (nettoyé en 	'{nombre_str_clean_pour_float}' ou 	'{cleaned_for_log}'). Erreur: {e_norm}")
         return None
     return valeur
+
+def identifier_reseau_social(text_ocr: str) -> str:
+    text_ocr_lower = text_ocr.lower()
+    logger.info(f"identifier_reseau_social: Début identification. Texte OCR (premiers 500 chars): {text_ocr_lower[:500]}")
+
+    # Instagram
+    instagram_keywords = [
+        "instagram", "publications", "followers", "suivi(e)s", "suivis", "suivies", 
+        "profil", "modifier profil", "partager le profil", "story", "stories", "reels", "explorer",
+        "tableau de bord", "voir le tableau de bord", "message", "messages"
+    ]
+    instagram_score = 0
+    instagram_specific_combo = False
+    for keyword in instagram_keywords:
+        if keyword in text_ocr_lower:
+            instagram_score += 1
+            logger.info(f"identifier_reseau_social: Mot-clé Instagram trouvé: \t'{keyword}'")
+    
+    if "publications" in text_ocr_lower and "followers" in text_ocr_lower and "suivi" in text_ocr_lower: # "suivi" pour couvrir suivi(e)s
+        instagram_specific_combo = True
+        logger.info("identifier_reseau_social: Combinaison spécifique Instagram (publications, followers, suivi) trouvée.")
+
+    logger.info(f"identifier_reseau_social: Score Instagram final: {instagram_score}")
+    if instagram_specific_combo and instagram_score >= 2:
+        logger.info("identifier_reseau_social: Instagram identifié par combinaison clé et score suffisant.")
+        return "instagram"
+    if "instagram" in text_ocr_lower and instagram_score >= 1:
+        logger.info("identifier_reseau_social: Instagram identifié par mot-clé 'instagram' et au moins un autre indicateur.")
+        return "instagram"
+    if instagram_score >= 3:
+        logger.info(f"identifier_reseau_social: Instagram identifié par score élevé ({instagram_score}).")
+        return "instagram"
+
+    # Twitter / X
+    twitter_keywords = [
+        "twitter", " x ", "accueil", "explorer", "notifications", "messages", 
+        "abonnements", "abonnés", "profil", "tweets", "retweets", "posts", "communautés",
+        "vérifié", "éditer le profil", "pour vous", "suivis", "listes"
+    ]
+    twitter_score = 0
+    twitter_specific_combo = False
+    for keyword in twitter_keywords:
+        if keyword in text_ocr_lower:
+            twitter_score += 1
+            logger.info(f"identifier_reseau_social: Mot-clé Twitter/X trouvé: \t'{keyword}'")
+    
+    if "abonnements" in text_ocr_lower and "abonnés" in text_ocr_lower:
+        twitter_specific_combo = True
+        logger.info("identifier_reseau_social: Combinaison spécifique Twitter/X (abonnements, abonnés) trouvée.")
+
+    logger.info(f"identifier_reseau_social: Score Twitter/X final: {twitter_score}")
+    if twitter_specific_combo and twitter_score >= 2:
+        logger.info("identifier_reseau_social: Twitter/X identifié par combinaison clé et score suffisant.")
+        return "twitter"
+    if "twitter" in text_ocr_lower and twitter_score >= 1:
+         logger.info("identifier_reseau_social: Twitter/X identifié par mot-clé 'twitter' et au moins un autre indicateur.")
+         return "twitter"
+    if " x " in text_ocr_lower and twitter_score >= 2:
+         logger.info("identifier_reseau_social: Twitter/X identifié par mot-clé ' x ' et au moins un autre indicateur.")
+         return "twitter"
+    if twitter_score >= 3:
+        logger.info(f"identifier_reseau_social: Twitter/X identifié par score élevé ({twitter_score}).")
+        return "twitter"
+
+    # TikTok
+    tiktok_keywords = ["tiktok", "pour toi", "following", "followers", "j_aime", "profil", "messages", "découvrir", "amis", "boîte de réception"]
+    tiktok_score = 0
+    for keyword in tiktok_keywords:
+        if keyword in text_ocr_lower:
+            tiktok_score += 1
+            logger.info(f"identifier_reseau_social: Mot-clé TikTok trouvé: \t'{keyword}'")
+
+    logger.info(f"identifier_reseau_social: Score TikTok final: {tiktok_score}")
+    if "tiktok" in text_ocr_lower and tiktok_score >= 1:
+        logger.info("identifier_reseau_social: TikTok identifié par mot-clé 'tiktok' et au moins un autre indicateur.")
+        return "tiktok"
+    if tiktok_score >= 3: 
+        logger.info(f"identifier_reseau_social: TikTok identifié par score élevé ({tiktok_score}).")
+        return "tiktok"
+        
+    # Facebook
+    facebook_keywords = ["facebook", "fil d_actualité", "stories", "reels", "profil", "amis", "j_aime", "commenter", "partager"]
+    facebook_score = 0
+    for keyword in facebook_keywords:
+        if keyword in text_ocr_lower:
+            facebook_score += 1
+            logger.info(f"identifier_reseau_social: Mot-clé Facebook trouvé: \t'{keyword}'")
+            
+    logger.info(f"identifier_reseau_social: Score Facebook final: {facebook_score}")
+    if "facebook" in text_ocr_lower and facebook_score >= 2:
+        logger.info("identifier_reseau_social: Facebook identifié par mot-clé 'facebook' et au moins un autre indicateur.")
+        return "facebook"
+    if facebook_score >= 3:
+        logger.info(f"identifier_reseau_social: Facebook identifié par score élevé ({facebook_score}).")
+        return "facebook"
+
+    logger.warning(f"identifier_reseau_social: Réseau non identifié après toutes les vérifications. Scores -> Instagram: {instagram_score}, Twitter/X: {twitter_score}, TikTok: {tiktok_score}, Facebook: {facebook_score}. OCR (500 chars): {text_ocr_lower[:500]}")
+    return "inconnu"
 
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
     try:
@@ -278,238 +372,290 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     logger.info(f"      NOUVEAU MEILLEUR CANDIDAT: 	'{num_ann['text']}' (norm: {num_ann['normalized']}), Score: {score:.2f} (avec mot-clé 	'{kw_ann['text']}')")
 
         if candidate_details_log:
-            candidate_details_log.sort(key=lambda c: c['score'])
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Top candidats (score ascendant) ---")
-            for i, cand in enumerate(candidate_details_log[:5]):
-                logger.info(f"    {i+1}. Num: 	'{cand['text']}' (norm: {cand['norm']}), Score: {cand['score']:.2f}, Mot-clé: 	'{cand['kw']}'")
+            candidate_details_log.sort(key=lambda x: x['score'])
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Top 3 candidats (score, norm, kw) ---")
+            for cand_log in candidate_details_log[:3]:
+                logger.info(f"    Score: {cand_log['score']:.2f}, Num: 	'{cand_log['norm']}' (	'{cand_log['text']}	'), Kw: 	'{cand_log['kw']}	'")
 
         if best_candidate_num:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Candidat final sélectionné: {best_candidate_num}")
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): MEILLEUR CANDIDAT FINAL: {best_candidate_num} avec score {min_score:.2f}")
             return best_candidate_num
         else:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat follower trouvé après analyse spatiale.")
-            if number_annotations_list and not keyword_annotations_list:
-                 number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0").replace(" ","")), reverse=True)
-                 if number_annotations_list:
-                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback ultime): Sélection du plus grand nombre: {number_annotations_list[0]['normalized']}")
-                     return number_annotations_list[0]['normalized']
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers trouvé après analyse de proximité.")
             return None
 
-    except Exception as e:
-        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE dans la fonction: {e}")
+    except Exception as e_spatial:
+        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR MAJEURE dans la fonction: {e_spatial}")
         logger.error(traceback.format_exc())
         return None
 
-def identifier_reseau_social(texts_annotations):
-    full_text_ocr = texts_annotations[0].description.lower() if texts_annotations else ""
-    if "twitter" in full_text_ocr or " x " in full_text_ocr or "@x.com" in full_text_ocr or "profil / x" in full_text_ocr or "abonnés" in full_text_ocr and ("abonnements" in full_text_ocr or "suivre" in full_text_ocr):
-        return "twitter"
-    if "tiktok" in full_text_ocr or "j_aime" in full_text_ocr or ("followers" in full_text_ocr and "suivis" in full_text_ocr):
-        return "tiktok"
-    if "instagram" in full_text_ocr or ("followers" in full_text_ocr and "following" in full_text_ocr):
-        return "instagram"
-    if "threads" in full_text_ocr:
-        return "threads"
-    if "facebook" in full_text_ocr or ("j_aime" in full_text_ocr and "amis" in full_text_ocr):
-        return "facebook"
-    logger.warning(f"Réseau social non identifié. Texte OCR: {full_text_ocr[:300]}")
-    return "inconnu"
+def extraire_username(text_annotations, reseau: str, full_text_ocr: str) -> str | None:
+    logger.info(f"extraire_username: Début extraction pour réseau: {reseau}")
+    if not text_annotations:
+        logger.warning("extraire_username: Aucune annotation de texte fournie.")
+        return None
 
-def extraire_username(texts_annotations, reseau):
-    full_text_ocr = texts_annotations[0].description if texts_annotations else ""
-    username = None
-    
-    if reseau == "tiktok":
-        match = re.search(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
-        if match:
-            username = match.group(1)
-            logger.info(f"Username TikTok trouvé par regex: @{username}")
-            return username
-    elif reseau == "instagram":
-        match_at = re.search(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
-        if match_at:
-            username = match_at.group(1)
-            logger.info(f"Username Instagram trouvé par regex @: @{username}")
-            return username
-        for ann in texts_annotations[1:20]: 
-            text = ann.description
-            if re.fullmatch(r"[a-z0-9_.]{3,30}", text.lower()): 
-                vertices = ann.bounding_poly.vertices
-                avg_y = sum(v.y for v in vertices) / 4
-                if avg_y < 350: 
-                    logger.info(f"Username Instagram potentiel (sans @, bien placé): {text}")
-                    return text
+    username_found = None
+    full_text_lower = full_text_ocr.lower()
+
+    if reseau == "instagram":
+        # Essayer de trouver le @username en haut de l'image, souvent le plus grand texte
+        # Ou chercher des motifs comme "modifier profil" puis le texte au-dessus
+        # Ou le premier texte significatif après "instagram"
+        # Tentative 1: Chercher un @username proéminent
+        for ann in text_annotations[1:]:
+            if ann.description.startswith("@") and len(ann.description) > 1:
+                username_found = ann.description
+                logger.info(f"extraire_username (Instagram): Trouvé via @: {username_found}")
+                return corriger_username(username_found, reseau)
+        
+        # Tentative 2: Chercher près de "Publications", "Followers", "Suivi(e)s"
+        # Souvent le nom est au-dessus de ces indicateurs
+        # On cherche un texte qui n'est pas un de ces mots-clés, et qui est au-dessus
+        y_ref = float('inf')
+        potential_usernames_above_stats = []
+        for ann in text_annotations[1:]:
+            if any(kw in ann.description.lower() for kw in ["publications", "followers", "suivi(e)s"]):
+                y_ref = min(y_ref, ann.bounding_poly.vertices[0].y)
+        
+        if y_ref != float('inf'):
+            for ann in text_annotations[1:]:
+                ann_text_lower = ann.description.lower()
+                if ann.bounding_poly.vertices[3].y < y_ref - 5 and \
+                   not any(kw in ann_text_lower for kw in ["publications", "followers", "suivi(e)s", "profil", "modifier", "message", "story", "reels"]) and \
+                   len(ann.description) > 2 and not ann.description.isdigit() and "instagram" not in ann_text_lower:
+                    potential_usernames_above_stats.append(ann.description)
             
+            if potential_usernames_above_stats:
+                # Prendre le plus probable (par ex. le plus long, ou celui avec le moins de chiffres)
+                potential_usernames_above_stats.sort(key=len, reverse=True)
+                username_found = potential_usernames_above_stats[0]
+                logger.info(f"extraire_username (Instagram): Trouvé au-dessus des stats: {username_found}")
+                return corriger_username(username_found, reseau)
+
+        # Tentative 3: Utiliser KNOWN_HANDLES si le nom de fichier correspond
+        # Cette logique est maintenant dans handle_photo, avant l'appel à extraire_username
+
     elif reseau == "twitter":
-        match = re.search(r"@([a-zA-Z0-9_]{1,15})", full_text_ocr)
-        if match:
-            username = match.group(1)
-            logger.info(f"Username Twitter trouvé par regex: @{username}")
-            return username
+        # Chercher le @username, souvent sous le nom complet
+        # Le nom complet est souvent plus grand, le @username commence par @
+        for ann in text_annotations[1:]:
+            if ann.description.startswith("@") and len(ann.description) > 1:
+                username_found = ann.description
+                logger.info(f"extraire_username (Twitter): Trouvé via @: {username_found}")
+                return corriger_username(username_found, reseau)
+        
+        # Si pas de @, chercher un texte plausible près de "Abonnements" / "Abonnés"
+        # souvent le nom d'affichage est au-dessus de ces termes.
+        y_ref_twitter = float('inf')
+        potential_usernames_twitter = []
+        for ann in text_annotations[1:]:
+            if any(kw in ann.description.lower() for kw in ["abonnements", "abonnés"]):
+                y_ref_twitter = min(y_ref_twitter, ann.bounding_poly.vertices[0].y)
+        
+        if y_ref_twitter != float('inf'):
+            for ann in text_annotations[1:]:
+                ann_text_lower = ann.description.lower()
+                if ann.bounding_poly.vertices[3].y < y_ref_twitter - 5 and \
+                   not any(kw in ann_text_lower for kw in ["abonnements", "abonnés", "profil", "éditer", "notifications", "messages"]) and \
+                   len(ann.description) > 2 and not ann.description.isdigit() and "twitter" not in ann_text_lower and " x " not in ann_text_lower:
+                    potential_usernames_twitter.append(ann.description)
+            
+            if potential_usernames_twitter:
+                potential_usernames_twitter.sort(key=len, reverse=True)
+                username_found = potential_usernames_twitter[0]
+                logger.info(f"extraire_username (Twitter): Trouvé au-dessus des stats (sans @): {username_found}")
+                return corriger_username(username_found, reseau)
 
-    if not username:
-        matches = re.findall(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
-        if matches:
-            potential_usernames = [m for m in matches if len(m) > 2 and not m.lower() in ["gmail", "hotmail", "outlook"]]
-            if potential_usernames:
-                for pu in potential_usernames:
-                    if pu.lower() in [h.lower() for h in KNOWN_HANDLES.get(reseau, [])] or \
-                       any(pu.lower() in [h.lower() for h in h_list] for h_list in KNOWN_HANDLES.values()):
-                        logger.info(f"Username générique trouvé (connu): @{pu}")
-                        return pu
-                username = potential_usernames[0]
-                logger.info(f"Username générique trouvé par regex (premier de la liste): @{username}")
-                return username
-    
-    if not username:
-        logger.warning(f"Username non trouvé pour {reseau}. OCR: {full_text_ocr[:300]}")
-    return username
+    elif reseau == "tiktok":
+        # Sur TikTok, le @username est souvent proéminent
+        for ann in text_annotations[1:]:
+            if ann.description.startswith("@") and len(ann.description) > 1:
+                username_found = ann.description
+                logger.info(f"extraire_username (TikTok): Trouvé via @: {username_found}")
+                return corriger_username(username_found, reseau)
+        # Fallback: chercher un texte qui ressemble à un nom d'utilisateur près de "Profil"
+        # ou le texte le plus grand en haut de l'écran.
+        # Cette partie peut être affinée si nécessaire.
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name_topic = "INCONNU"
-    message_id_to_reply = update.message.message_id
-    chat_id = update.message.chat_id
-    photo_processed_successfully = False
-    bot_instance = context.bot # Récupérer l_instance du bot depuis le contexte
+    if not username_found:
+        logger.warning(f"extraire_username: Nom d_utilisateur non trouvé pour {reseau} avec les méthodes actuelles.")
+    return username_found
 
+def get_text_from_image_vision(image_bytes: bytes) -> tuple[str | None, list | None]:
     try:
-        if not update.message.photo:
-            logger.info("handle_photo: Le message ne contient pas de photo.")
-            return
-
-        if not update.message.reply_to_message or not update.message.reply_to_message.is_topic_message:
-            logger.info("handle_photo: La photo n_est pas une réponse à un message de topic.")
-            return
-
-        topic_creator_message = update.message.reply_to_message
-        if not topic_creator_message.forum_topic_created:
-            logger.info("handle_photo: Le message auquel on répond n_est pas un message de création de topic.")
-            return
-
-        topic_name = topic_creator_message.forum_topic_created.name
-        if not topic_name.startswith("SUIVI "):
-            logger.info(f"handle_photo: Le nom du topic 	'{topic_name}' ne commence pas par 'SUIVI '. Traitement annulé.")
-            return
-        
-        user_name_topic = topic_name.replace("SUIVI ", "").strip()
-        logger.info(f"handle_photo: Traitement de l_image pour le topic: {topic_name} (Assistant: {user_name_topic})")
-
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = io.BytesIO()
-        await photo_file.download_to_memory(photo_bytes)
-        photo_bytes.seek(0)
-
-        image_pil = Image.open(photo_bytes)
-        width, height = image_pil.size
-        cropped_image = image_pil.crop((0, 0, width, int(height * 0.55)))
-        
-        img_byte_arr = io.BytesIO()
-        cropped_image.save(img_byte_arr, format='PNG')
-        content = img_byte_arr.getvalue()
-        
-        image_vision = vision.Image(content=content)
-        response = vision_client.text_detection(image=image_vision)
-        texts_annotations = response.text_annotations
+        image = vision.Image(content=image_bytes)
+        response = vision_client.text_detection(image=image)
+        texts = response.text_annotations
 
         if response.error.message:
-            raise Exception(f"Erreur de l_API Google Vision: {response.error.message}")
-
-        if not texts_annotations:
-            logger.warning("Aucun texte détecté par Google Vision AI.")
-            raise ValueError("Aucun texte détecté par Google Vision AI.")
-
-        reseau = identifier_reseau_social(texts_annotations)
-        logger.info(f"handle_photo: Réseau identifié: {reseau}")
-
-        username = extraire_username(texts_annotations, reseau)
-        if username:
-            username = corriger_username(username, reseau)
-            logger.info(f"🕵️ Username final : 	'{username}' (réseau : {reseau})")
+            logger.error(f"Erreur de l_API Google Vision: {response.error.message}")
+            return None, None
+        
+        if texts:
+            logger.info(f"get_text_from_image_vision: Texte extrait avec succès. Premier élément (texte complet): {texts[0].description[:100]}...")
+            return texts[0].description, texts
         else:
-            logger.warning(f"Impossible d_extraire le nom d_utilisateur pour le réseau {reseau}.")
-            raise ValueError(f"Nom d_utilisateur non trouvé pour {reseau}")
-
-        mots_cles_followers = {
-            "tiktok": ["followers", "abonnés", "fans", "j_aime"],
-            "instagram": ["followers", "abonnés"],
-            "twitter": ["followers", "abonnés", "suivre"], 
-            "threads": ["followers", "abonnés"],
-            "facebook": ["amis", "j_aime", "personnes suivent ça"]
-        }
-        abonnés = extraire_followers_spatial(texts_annotations, mots_cles_followers.get(reseau, ["followers", "abonnés"]), reseau)
-
-        if abonnés:
-            logger.info(f"📊 Followers extraits: {abonnés}")
-        else:
-            logger.warning(f"Impossible d_extraire le nombre de followers pour {username} sur {reseau}.")
-            raise ValueError(f"Nombre de followers non trouvé pour {username} sur {reseau}")
-
-        now = datetime.datetime.now().strftime("%d/%m/%Y")
-        row = [now, user_name_topic.upper(), reseau, f"@{username}", abonnés]
-        sheet.append_row(row)
-        logger.info(f"Données ajoutées à Google Sheets: {row}")
-        photo_processed_successfully = True
-
-    except ValueError as ve:
-        logger.warning(f"ValueError dans handle_photo: {ve}")
+            logger.warning("get_text_from_image_vision: Aucun texte détecté par Google Vision.")
+            return None, None
     except Exception as e:
-        logger.error("❌ Erreur globale dans handle_photo")
+        logger.error(f"Erreur lors de l_extraction du texte avec Google Vision: {e}")
         logger.error(traceback.format_exc())
-    finally:
-        if user_name_topic != "INCONNU":
-            today_date_str = datetime.datetime.now().strftime("%d/%m/%Y")
-            va_name = user_name_topic.upper() if user_name_topic else "INCONNU"
-            
-            general_topic_message_id = None
-            GENERAL_TOPIC_THREAD_ID = os.getenv("TELEGRAM_GENERAL_TOPIC_THREAD_ID")
-            if GENERAL_TOPIC_THREAD_ID:
-                try:
-                    general_topic_message_id = int(GENERAL_TOPIC_THREAD_ID)
-                    logger.info(f"Utilisation du GENERAL_TOPIC_THREAD_ID: {general_topic_message_id}")
-                except ValueError:
-                    logger.error(f"TELEGRAM_GENERAL_TOPIC_THREAD_ID n_est pas un entier valide: {GENERAL_TOPIC_THREAD_ID}")
-            else:
-                logger.warning("TELEGRAM_GENERAL_TOPIC_THREAD_ID non défini. Le message de statut sera envoyé au chat principal.")
+        return None, None
 
-            if photo_processed_successfully:
-                status_message = f"🤖 {today_date_str} - {va_name} - ✅ 1 compte détecté et ajouté ✅"
-            else:
-                status_message = f"🤖 {today_date_str} - {va_name} - ❌ Analyse OCR impossible ❌"
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.photo:
+        logger.info("handle_photo: Message sans photo reçu, ignoré.")
+        return
+
+    user = update.message.from_user
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+    thread_id = update.message.message_thread_id
+    
+    general_topic_thread_id_str = os.getenv("TELEGRAM_GENERAL_TOPIC_THREAD_ID")
+    general_topic_thread_id = int(general_topic_thread_id_str) if general_topic_thread_id_str and general_topic_thread_id_str.isdigit() else None
+
+    logger.info(f"handle_photo: Photo reçue de {user.username} (ID: {user.id}) dans le chat {chat_id} (Thread: {thread_id}).")
+
+    # Vérifier si le message provient d'un sujet "SUIVI..."
+    topic_name = ""
+    if thread_id:
+        try:
+            # Pour obtenir le nom du sujet, il faudrait une méthode pour lister les sujets ou une base de données.
+            # Pour l'instant, on se base sur une convention de nommage si on peut l'obtenir.
+            # Cette partie est complexe sans accès direct aux noms des sujets.
+            # On va supposer que si c'est un thread, c'est un sujet de suivi pour l'instant.
+            # Idéalement, on filtrerait sur le nom du sujet commençant par "SUIVI".
+            # Pour l'instant, on traite toutes les images dans les sujets.
+            pass # On continue si c'est un thread
+        except Exception as e_topic_name:
+            logger.warning(f"handle_photo: Impossible de déterminer le nom du sujet pour le thread_id {thread_id}: {e_topic_name}")
+            # On continue quand même, mais le nom du modèle sera vide
+
+    file_id = update.message.photo[-1].file_id
+    try:
+        new_file = await context.bot.get_file(file_id)
+        file_path = new_file.file_path
+        logger.info(f"handle_photo: Informations du fichier obtenues: {file_path}")
+
+        # Télécharger l_image en mémoire
+        img_byte_array = io.BytesIO()
+        await new_file.download_to_memory(img_byte_array)
+        img_byte_array.seek(0)
+        image_bytes_content = img_byte_array.read()
+        logger.info(f"handle_photo: Image téléchargée en mémoire ({len(image_bytes_content)} bytes).")
+
+        # Recadrer l_image (55% supérieur)
+        try:
+            img = Image.open(io.BytesIO(image_bytes_content))
+            width, height = img.size
+            crop_height = int(height * 0.55)
+            cropped_img = img.crop((0, 0, width, crop_height))
             
+            # Convertir l_image recadrée en bytes pour Vision AI
+            cropped_img_byte_array = io.BytesIO()
+            cropped_img.save(cropped_img_byte_array, format=img.format if img.format else 'PNG') # S'assurer du format
+            image_bytes_for_vision = cropped_img_byte_array.getvalue()
+            logger.info(f"handle_photo: Image recadrée à 55% ({len(image_bytes_for_vision)} bytes) et prête pour Vision AI.")
+        except Exception as e_crop:
+            logger.error(f"handle_photo: Erreur lors du recadrage de l_image: {e_crop}. Utilisation de l_image originale.")
+            logger.error(traceback.format_exc())
+            image_bytes_for_vision = image_bytes_content # Fallback à l'image originale
+
+        full_text_ocr, text_annotations = get_text_from_image_vision(image_bytes_for_vision)
+
+        if not full_text_ocr or not text_annotations:
+            logger.warning("handle_photo: OCR n_a retourné aucun texte. Abandon.")
+            if general_topic_thread_id:
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=general_topic_thread_id, text=f"🤖 {datetime.date.today().strftime('%d/%m/%Y')} - {user.username or user.first_name} - ❌ OCR n_a rien détecté sur l_image. ❌")
+            return
+
+        reseau_social = identifier_reseau_social(full_text_ocr)
+        logger.info(f"handle_photo: Réseau identifié: {reseau_social}")
+
+        nom_modele = ""
+        # Essayer d_extraire le nom du modèle à partir du nom du sujet (si possible et pertinent)
+        # Cette partie dépend de la capacité à obtenir le nom du sujet.
+        # Pour l'instant, on se base sur KNOWN_HANDLES si le nom de fichier correspond.
+
+        # Logique pour obtenir le nom du modèle à partir de KNOWN_HANDLES
+        # Cela suppose que le nom du fichier de la photo (si disponible et pertinent) ou une autre info
+        # peut être mappée à un nom de modèle via KNOWN_HANDLES.
+        # Pour l'instant, on va essayer de trouver un @username dans l'OCR et le chercher dans KNOWN_HANDLES
+        
+        username_ocr = extraire_username(text_annotations, reseau_social, full_text_ocr)
+        if username_ocr:
+            username_ocr_corrected = corriger_username(username_ocr, reseau_social)
+            logger.info(f"handle_photo: Username extrait de l_OCR: 	'{username_ocr_corrected}	' (original: 	'{username_ocr}	')")
+            # Chercher si ce username_ocr est une clé dans KNOWN_HANDLES
+            if username_ocr_corrected in KNOWN_HANDLES:
+                nom_modele = KNOWN_HANDLES[username_ocr_corrected]
+                logger.info(f"handle_photo: Nom de modèle trouvé via KNOWN_HANDLES pour 	'{username_ocr_corrected}	': {nom_modele}")
+            else:
+                # Essayer une correspondance approchante
+                match = get_close_matches(username_ocr_corrected, KNOWN_HANDLES.keys(), n=1, cutoff=0.8)
+                if match:
+                    nom_modele = KNOWN_HANDLES[match[0]]
+                    logger.info(f"handle_photo: Nom de modèle trouvé par correspondance approchante pour 	'{username_ocr_corrected}	' (match: 	'{match[0]}	'): {nom_modele}")
+                else:
+                    nom_modele = username_ocr_corrected # Fallback au username OCR si non trouvé
+                    logger.info(f"handle_photo: Nom de modèle non trouvé dans KNOWN_HANDLES pour 	'{username_ocr_corrected}	'. Utilisation de l_username OCR comme nom de modèle.")
+        else:
+            logger.warning("handle_photo: Aucun nom d_utilisateur n_a pu être extrait de l_OCR.")
+            nom_modele = "Inconnu" # Fallback si aucun username n'est extrait
+
+        followers = None
+        if reseau_social == "instagram":
+            followers = extraire_followers_spatial(text_annotations, ["followers", "follower"], "instagram")
+        elif reseau_social == "twitter":
+            followers = extraire_followers_spatial(text_annotations, ["abonnés", "abonné"], "twitter")
+        elif reseau_social == "tiktok":
+            followers = extraire_followers_spatial(text_annotations, ["followers", "abonnés", "abonné"], "tiktok")
+        # Pas de gestion spécifique pour Facebook followers pour l'instant
+        
+        if followers:
+            logger.info(f"handle_photo: Followers extraits pour {reseau_social} - {nom_modele}: {followers}")
+            # Enregistrer dans Google Sheets
             try:
-                await bot_instance.send_message( # Utiliser bot_instance ici
-                    chat_id=GROUP_ID, 
-                    text=status_message,
-                    message_thread_id=general_topic_message_id
-                )
-                logger.info(f"Message de statut envoyé au sujet General (ou chat principal): {status_message}")
-            except Exception as e_send_status:
-                logger.error(f"Erreur lors de l_envoi du message de statut au sujet General: {e_send_status}")
+                row = [datetime.date.today().strftime("%d/%m/%Y"), user.username or user.first_name, reseau_social, nom_modele, followers]
+                sheet.append_row(row)
+                logger.info(f"handle_photo: Données enregistrées dans Google Sheets: {row}")
+                if general_topic_thread_id:
+                    await context.bot.send_message(chat_id=chat_id, message_thread_id=general_topic_thread_id, text=f"🤖 {row[0]} - {row[1]} - ✅ {row[2]}/{row[3]} : {row[4]} followers enregistrés.")
+            except Exception as e_gsheet:
+                logger.error(f"handle_photo: Erreur lors de l_enregistrement dans Google Sheets: {e_gsheet}")
                 logger.error(traceback.format_exc())
+                if general_topic_thread_id:
+                    await context.bot.send_message(chat_id=chat_id, message_thread_id=general_topic_thread_id, text=f"🤖 {datetime.date.today().strftime('%d/%m/%Y')} - {user.username or user.first_name} - ⚠️ Erreur lors de l_enregistrement Google Sheets pour {reseau_social}/{nom_modele}.")
+        else:
+            logger.warning(f"handle_photo: Analyse OCR impossible ou followers non trouvés pour {reseau_social} - {nom_modele}.")
+            if general_topic_thread_id:
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=general_topic_thread_id, text=f"🤖 {datetime.date.today().strftime('%d/%m/%Y')} - {user.username or user.first_name} - ❌ Analyse OCR impossible pour {reseau_social}/{nom_modele}. ❌")
 
-# Supprimer webhook_handler et startup_webhook car non utilisés en mode polling
+    except Exception as e:
+        logger.error(f"Erreur inattendue dans handle_photo: {e}")
+        logger.error(traceback.format_exc())
+        if general_topic_thread_id:
+            try:
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=general_topic_thread_id, text=f"🤖 {datetime.date.today().strftime('%d/%m/%Y')} - {user.username or user.first_name} - ❗️ Erreur grave dans le traitement de l_image.")
+            except Exception as e_send_error:
+                logger.error(f"Impossible d_envoyer le message d_erreur grave: {e_send_error}")
 
-def main():
-    if not TOKEN:
-        logger.error("La variable d_environnement TELEGRAM_BOT_TOKEN n_est pas définie.")
-        exit()
-    if not GROUP_ID:
-        logger.error("La variable d_environnement TELEGRAM_GROUP_ID n_est pas définie.")
-        exit()
-    if not SPREADSHEET_ID:
-        logger.error("La variable d_environnement SPREADSHEET_ID n_est pas définie.")
-        exit()
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+    logger.info(f"Message texte reçu de {update.message.from_user.username}: {update.message.text[:50]}... Ignoré car ce bot ne traite que les photos.")
 
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo))
-    
-    logger.info("Application Telegram initialisée pour le mode polling.")
-    
-    # Lancer le bot en mode polling
-    logger.info("Lancement du bot en mode polling...")
-    application.run_polling()
+def main() -> Application:
+    ptb_app = Application.builder().token(TOKEN).build()
+    ptb_app.add_handler(MessageHandler(filters.PHOTO & (~filters.COMMAND), handle_photo))
+    ptb_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
+    logger.info("Application Telegram initialisée avec les handlers photo et texte.")
+    return ptb_app
 
 if __name__ == "__main__":
-    main()
+    application = main()
+    logger.info("Lancement du bot en mode polling...")
+    application.run_polling()
 
