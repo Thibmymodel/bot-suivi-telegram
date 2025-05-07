@@ -300,7 +300,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     y_diff_merge = abs(best_merged_ann['avg_y'] - next_num_ann_to_try['avg_y'])
                     x_gap_merge = next_num_ann_to_try['min_x'] - best_merged_ann['max_x']
 
-                    if y_diff_merge < 20 and x_gap_merge >= -10 and x_gap_merge < 50:
+                    if y_diff_merge < 25 and x_gap_merge >= -15 and x_gap_merge < 35: # Ajustement des seuils pour la fusion
                         combined_text_try = best_merged_ann['text'] + " " + next_num_ann_to_try['text']
                         combined_normalized_try = normaliser_nombre_followers(combined_text_try)
                         
