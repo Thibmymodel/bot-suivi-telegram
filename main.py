@@ -273,64 +273,103 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Nombres potentiels AVANT fusion ---")
         for idx, num_ann_log in enumerate(number_annotations_list):
-            logger.info(f"  Pre-fusion Num {idx}: 	'{num_ann_log['text']}' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}")
+            logger.info(f"  Pre-fusion Num {idx}: 	'{num_ann_log['text']}' (norm: {num_ann_log['normalized']}), y:{num_ann_log['avg_y']:.0f}, x:{num_ann_log['avg_x']:.0f}"            # Réécriture de la logique de fusion v2
+            if len(number_annotations_list) > 1:
+                logger.info(f"extraire_followers_spatial ({reseau_nom}): Tentative de regroupement de {len(number_annotations_list)} nombres avec logique v2.")
+                number_annotations_list.sort(key=lambda ann: (ann["avg_y"], ann["avg_x"])) # Trier par Y puis par X
+                
+                merged_numbers_accumulator = []
+                processed_indices_merge = set()
 
-        if len(number_annotations_list) > 1:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Tentative de regroupement de {len(number_annotations_list)} nombres.")
-            number_annotations_list.sort(key=lambda ann: (ann['avg_y'], ann['avg_x']))
-            merged_numbers_final = []
-            temp_merged_list = list(number_annotations_list)
-            
-            processed_indices = set()
-
-            for i in range(len(temp_merged_list)):
-                if i in processed_indices:
-                    continue
-
-                current_num_ann = temp_merged_list[i]
-                best_merged_ann = current_num_ann
-                current_merged_indices = {i}
-
-                for j in range(i + 1, len(temp_merged_list)):
-                    if j in processed_indices:
+                for i in range(len(number_annotations_list)):
+                    if i in processed_indices_merge:
                         continue
-                    
-                    next_num_ann_to_try = temp_merged_list[j]
-                    
-                    y_diff_merge = abs(best_merged_ann['avg_y'] - next_num_ann_to_try['avg_y'])
-                    x_gap_merge = next_num_ann_to_try['min_x'] - best_merged_ann['max_x']
 
-                    if y_diff_merge < 25 and x_gap_merge >= -15 and x_gap_merge < 35: # Ajustement des seuils pour la fusion
-                        combined_text_try = best_merged_ann['text'] + " " + next_num_ann_to_try['text']
-                        combined_normalized_try = normaliser_nombre_followers(combined_text_try)
+                    current_ann = number_annotations_list[i]
+                    # Initialiser le groupe avec l_élément courant
+                    current_group_text_parts = [current_ann["text"]]
+                    current_group_normalized_parts = [current_ann["normalized"]]
+                    current_group_min_x = current_ann["min_x"]
+                    current_group_max_x = current_ann["max_x"]
+                    current_group_avg_y = current_ann["avg_y"]
+                    current_group_min_y = current_ann["min_y"]
+                    current_group_max_y = current_ann["max_y"]
+                    current_group_indices = {i}
+                    
+                    last_ann_in_current_group = current_ann
+
+                    # Essayer de fusionner avec les éléments suivants
+                    for j in range(i + 1, len(number_annotations_list)):
+                        if j in processed_indices_merge:
+                            continue
                         
-                        if combined_normalized_try and len(combined_normalized_try) >= len(best_merged_ann['normalized']):
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): Fusion potentielle de 	'{best_merged_ann['text']}' et 	'{next_num_ann_to_try['text']}' en 	'{combined_text_try}' (norm: {combined_normalized_try})")
-                            best_merged_ann = {
-                                "text": combined_text_try,
-                                "normalized": combined_normalized_try,
-                                "avg_y": (best_merged_ann['avg_y'] + next_num_ann_to_try['avg_y']) / 2,
-                                "avg_x": (best_merged_ann['min_x'] + next_num_ann_to_try['max_x']) / 2, 
-                                "min_x": best_merged_ann['min_x'],
-                                "max_x": next_num_ann_to_try['max_x'],
-                                "min_y": min(best_merged_ann['min_y'], next_num_ann_to_try['min_y']),
-                                "max_y": max(best_merged_ann['max_y'], next_num_ann_to_try['max_y']),
-                                "annotation": None 
-                            }
-                            current_merged_indices.add(j)
+                        next_ann_to_try = number_annotations_list[j]
+                        
+                        y_diff = abs(last_ann_in_current_group["avg_y"] - next_ann_to_try["avg_y"])
+                        # x_gap est la distance entre la fin du dernier élément du groupe et le début du suivant
+                        x_gap = next_ann_to_try["min_x"] - last_ann_in_current_group["max_x"]
+                        
+                        # Critères de fusion: même ligne (tolérance Y), et X adjacent (petite gap ou léger chevauchement)
+                        if y_diff < 20 and x_gap >= -10 and x_gap < 35: # Tolérance Y de 20px, X gap de -10px à 35px
+                            logger.info(f"    Tentative de fusion: 		{"".join(current_group_text_parts)}		 avec 		{next_ann_to_try["text"]}		 (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")
+                            # Essayer de normaliser la fusion pour voir si elle est valide
+                            potential_merged_text = " ".join(current_group_text_parts + [next_ann_to_try["text"]])
+                            potential_normalized = normaliser_nombre_followers(potential_merged_text)
+                            
+                            # Si la fusion est valide et plus longue ou égale au dernier normalisé du groupe
+                            if potential_normalized and len(potential_normalized) >= len(current_group_normalized_parts[-1]):
+                                current_group_text_parts.append(next_ann_to_try["text"])
+                                current_group_normalized_parts.append(next_ann_to_try["normalized"]) # Garder les normalisés individuels pour info
+                                current_group_max_x = max(current_group_max_x, next_ann_to_try["max_x"])
+                                current_group_min_y = min(current_group_min_y, next_ann_to_try["min_y"])
+                                current_group_max_y = max(current_group_max_y, next_ann_to_try["max_y"])
+                                current_group_indices.add(j)
+                                last_ann_in_current_group = next_ann_to_try # Mettre à jour le dernier élément fusionné
+                                logger.info(f"      -> Fusionné: 		{next_ann_to_try["text"]}		 -> Nouveau groupe: 		{"".join(current_group_text_parts)}		 (norm: {potential_normalized})")
+                            else:
+                                logger.info(f"      -> Fusion REFUSÉE (normalisation échouée ou non améliorée): 		{potential_merged_text}		 (norm: {potential_normalized})")
+                                break # Arrêter de fusionner pour ce groupe si la continuité est rompue
+                        else:
+                            # Si les critères ne sont pas remplis, ne pas fusionner plus loin pour ce groupe avec cet élément
+                            # logger.debug(f"    Critères de fusion non remplis pour 		{next_ann_to_try["text"]}		 avec le groupe actuel (y_diff:{y_diff:.0f}, x_gap:{x_gap:.0f})")
+                            pass # On pourrait break ici si on veut une contiguïté stricte
+                    
+                    # Une fois le groupe potentiel formé, le normaliser et l_ajouter
+                    final_merged_text_for_group = " ".join(current_group_text_parts)
+                    final_normalized_text_for_group = normaliser_nombre_followers(final_merged_text_for_group)
+
+                    if final_normalized_text_for_group:
+                        merged_numbers_accumulator.append({
+                            "text": final_merged_text_for_group,
+                            "normalized": final_normalized_text_for_group,
+                            "avg_y": current_group_avg_y, 
+                            "avg_x": (current_group_min_x + current_group_max_x) / 2,
+                            "min_x": current_group_min_x,
+                            "max_x": current_group_max_x,
+                            "min_y": current_group_min_y,
+                            "max_y": current_group_max_y,
+                            "annotation": current_ann["annotation"] # Annotation du premier élément du groupe
+                        })
+                        processed_indices_merge.update(current_group_indices)
+                        logger.info(f"  => Groupe final ajouté: 		{final_merged_text_for_group}		 (norm: {final_normalized_text_for_group}), indices: {current_group_indices}")
                     else:
-                        pass 
+                        # Si la fusion finale du groupe n_est pas normalisable, ajouter l_élément original
+                        merged_numbers_accumulator.append(current_ann)
+                        processed_indices_merge.add(i)
+                        logger.info(f"  => Élément original conservé (groupe fusionné non normalisable): 		{current_ann["text"]}		")
+                
+                # S_assurer que tous les éléments non traités sont ajoutés (ceux qui n_ont formé aucun groupe)
+                for k_idx, k_ann in enumerate(number_annotations_list):
+                    if k_idx not in processed_indices_merge:
+                        merged_numbers_accumulator.append(k_ann)
+                        logger.warning(f"  => Élément original non fusionné ajouté (sécurité): 		{k_ann["text"]}		")
+                
+                number_annotations_list = merged_numbers_accumulator
             
-                merged_numbers_final.append(best_merged_ann)
-                processed_indices.update(current_merged_indices)
-
-            if merged_numbers_final:
-                logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres après tentative de fusion: {len(merged_numbers_final)}")
-                for idx, merged_ann_log in enumerate(merged_numbers_final):
-                    logger.info(f"  Post-fusion Num {idx}: 	'{merged_ann_log['text']}' (norm: {merged_ann_log['normalized']}), y:{merged_ann_log['avg_y']:.0f}, x:{merged_ann_log['avg_x']:.0f}")
-                number_annotations_list = merged_numbers_final
-
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres après NOUVELLE logique de fusion v2: {len(number_annotations_list)}")
+            for idx, num_ann_log in enumerate(number_annotations_list):
+                logger.info(f"  Post-fusion (logique v2) Num {idx}: 		{num_ann_log["text"]}		 (norm: {num_ann_log["normalized"]}), y:{num_ann_log["avg_y"]:.0f}, x:{num_ann_log["avg_x"]:.0f}")
+logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres (post-fusion final): {len(number_annotations_list)}")
 
         if not keyword_annotations_list:
