@@ -4,12 +4,12 @@ import re
 import datetime
 import logging
 import os
-import traceback # Assurez-vous que traceback est importé
+import traceback
 from difflib import get_close_matches
 
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from PIL import Image, ImageOps # ImageEnhance retiré car non utilisé
+from PIL import Image, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.cloud import vision
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL")
+# RAILWAY_PUBLIC_URL n_est plus nécessaire pour le mode polling
 
 # Initialisation Google Sheets
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
@@ -55,7 +55,7 @@ except Exception as e:
     logger.error(traceback.format_exc())
     exit()
 
-bot = Bot(TOKEN)
+# bot = Bot(TOKEN) # L_instance de Bot sera créée par l_Application
 
 with open("known_handles.json", "r", encoding="utf-8") as f:
     KNOWN_HANDLES = json.load(f)
@@ -74,7 +74,7 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
         return None
 
     nombre_str_clean_pour_km = nombre_str_test.lower()
-    nombre_str_clean_pour_km = re.sub(r"[\s.,]", "", nombre_str_clean_pour_km) # Enlève espaces, points, virgules pour k/m
+    nombre_str_clean_pour_km = re.sub(r"[\s.,]", "", nombre_str_clean_pour_km)
     
     nombre_str_clean_pour_float = nombre_str_test.replace(" ", "")
     if ',' in nombre_str_clean_pour_float and '.' in nombre_str_clean_pour_float:
@@ -88,8 +88,6 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
     
     parts = nombre_str_clean_pour_float.split('.')
     if len(parts) > 1:
-        # Garde la dernière partie comme décimale, joint le reste.
-        # Ex: "1.234.56" -> "1234.56"
         nombre_str_clean_pour_float = "".join(parts[:-1]) + "." + parts[-1]
 
     valeur = None
@@ -196,22 +194,19 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     continue
 
                 current_num_ann = temp_merged_list[i]
-                best_merged_ann = current_num_ann # Initialiser avec l'élément courant
+                best_merged_ann = current_num_ann
                 current_merged_indices = {i}
 
-                # Essayer de fusionner avec les suivants
                 for j in range(i + 1, len(temp_merged_list)):
                     if j in processed_indices:
                         continue
                     
                     next_num_ann_to_try = temp_merged_list[j]
                     
-                    # Tenter de fusionner `best_merged_ann` (qui peut déjà être une fusion) avec `next_num_ann_to_try`
                     y_diff_merge = abs(best_merged_ann['avg_y'] - next_num_ann_to_try['avg_y'])
                     x_gap_merge = next_num_ann_to_try['min_x'] - best_merged_ann['max_x']
 
-                    if y_diff_merge < 20 and x_gap_merge >= -10 and x_gap_merge < 50: # Critères de proximité
-                        # Important: utiliser le texte original pour la fusion
+                    if y_diff_merge < 20 and x_gap_merge >= -10 and x_gap_merge < 50:
                         combined_text_try = best_merged_ann['text'] + " " + next_num_ann_to_try['text']
                         combined_normalized_try = normaliser_nombre_followers(combined_text_try)
                         
@@ -228,16 +223,12 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                                 "max_y": max(best_merged_ann['max_y'], next_num_ann_to_try['max_y']),
                                 "annotation": None 
                             }
-                            current_merged_indices.add(j) # Ajouter l'index de l'élément fusionné
-                        else:
-                            # La fusion n'est pas meilleure ou n'est pas valide, on arrête pour ce `current_num_ann`
-                            pass # Ne pas fusionner si ça ne donne pas un meilleur résultat
+                            current_merged_indices.add(j)
                     else:
-                        # Pas assez proche pour fusionner avec le suivant dans la chaîne de fusion
-                        pass # On pourrait décider de ne pas continuer la chaîne de fusion ici
+                        pass 
             
                 merged_numbers_final.append(best_merged_ann)
-                processed_indices.update(current_merged_indices) # Marquer tous les indices utilisés dans cette fusion
+                processed_indices.update(current_merged_indices)
 
             if merged_numbers_final:
                 logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombres après tentative de fusion: {len(merged_numbers_final)}")
@@ -271,12 +262,10 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                 logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']:.0f}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
 
                 score = float('inf')
-                # Cas 1: Nombre en dessous du mot-clé (Instagram, TikTok)
                 if y_diff > -20 and y_diff < 100 and x_diff < 200: 
                     score = abs(y_diff) + x_diff * 0.5 
                     logger.debug(f"      Candidat (sous/proche Y): Score {score:.2f}")
                 
-                # Cas 2: Nombre avant ou après le mot-clé sur la même ligne (Twitter: "61 Followers")
                 if abs(y_diff) < 40 and x_diff < 300: 
                     current_score_side = x_diff + abs(y_diff) * 0.8 
                     logger.debug(f"      Candidat (latéral): Score {current_score_side:.2f}")
@@ -313,7 +302,6 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
 def identifier_reseau_social(texts_annotations):
     full_text_ocr = texts_annotations[0].description.lower() if texts_annotations else ""
-    # Mots-clés plus spécifiques pour Twitter/X
     if "twitter" in full_text_ocr or " x " in full_text_ocr or "@x.com" in full_text_ocr or "profil / x" in full_text_ocr or "abonnés" in full_text_ocr and ("abonnements" in full_text_ocr or "suivre" in full_text_ocr):
         return "twitter"
     if "tiktok" in full_text_ocr or "j_aime" in full_text_ocr or ("followers" in full_text_ocr and "suivis" in full_text_ocr):
@@ -338,41 +326,32 @@ def extraire_username(texts_annotations, reseau):
             logger.info(f"Username TikTok trouvé par regex: @{username}")
             return username
     elif reseau == "instagram":
-        # Chercher d'abord un @username clair
         match_at = re.search(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
         if match_at:
             username = match_at.group(1)
             logger.info(f"Username Instagram trouvé par regex @: @{username}")
             return username
-        # Sinon, chercher un nom plausible en haut de l'image
         for ann in texts_annotations[1:20]: 
             text = ann.description
-            # Regex pour un nom d'utilisateur Instagram (peut contenir des points)
             if re.fullmatch(r"[a-z0-9_.]{3,30}", text.lower()): 
                 vertices = ann.bounding_poly.vertices
                 avg_y = sum(v.y for v in vertices) / 4
-                if avg_y < 350: # Assez haut sur l'image
+                if avg_y < 350: 
                     logger.info(f"Username Instagram potentiel (sans @, bien placé): {text}")
                     return text
             
     elif reseau == "twitter":
-        # Pour Twitter, le @handle est souvent proéminent
-        match = re.search(r"@([a-zA-Z0-9_]{1,15})", full_text_ocr) # Twitter handles: 1-15 chars, no points
+        match = re.search(r"@([a-zA-Z0-9_]{1,15})", full_text_ocr)
         if match:
             username = match.group(1)
             logger.info(f"Username Twitter trouvé par regex: @{username}")
             return username
-        # Fallback: chercher un nom affiché si le @ n'est pas là (moins fiable)
-        # Souvent le nom est en plus gros au dessus du @handle
-        # Cette logique est plus complexe et peut nécessiter une analyse spatiale aussi
 
-    # Logique générique si les regex spécifiques échouent
     if not username:
         matches = re.findall(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
         if matches:
             potential_usernames = [m for m in matches if len(m) > 2 and not m.lower() in ["gmail", "hotmail", "outlook"]]
             if potential_usernames:
-                # Essayer de trouver un handle connu
                 for pu in potential_usernames:
                     if pu.lower() in [h.lower() for h in KNOWN_HANDLES.get(reseau, [])] or \
                        any(pu.lower() in [h.lower() for h in h_list] for h_list in KNOWN_HANDLES.values()):
@@ -391,6 +370,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id_to_reply = update.message.message_id
     chat_id = update.message.chat_id
     photo_processed_successfully = False
+    bot_instance = context.bot # Récupérer l_instance du bot depuis le contexte
 
     try:
         if not update.message.photo:
@@ -497,7 +477,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_message = f"🤖 {today_date_str} - {va_name} - ❌ Analyse OCR impossible ❌"
             
             try:
-                await bot.send_message(
+                await bot_instance.send_message( # Utiliser bot_instance ici
                     chat_id=GROUP_ID, 
                     text=status_message,
                     message_thread_id=general_topic_message_id
@@ -507,33 +487,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Erreur lors de l_envoi du message de statut au sujet General: {e_send_status}")
                 logger.error(traceback.format_exc())
 
-async def webhook_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.debug(f"Webhook received update: {update.to_json()[:500]}...") # Log tronqué
-    if update.message and update.message.photo and \
-       update.message.reply_to_message and \
-       update.message.reply_to_message.is_topic_message and \
-       update.message.reply_to_message.forum_topic_created and \
-       update.message.reply_to_message.forum_topic_created.name.startswith("SUIVI "):
-        await handle_photo(update, context)
-    else:
-        logger.info("Webhook_handler: Message non pertinent pour handle_photo.")
+# Supprimer webhook_handler et startup_webhook car non utilisés en mode polling
 
-async def startup_webhook(application: Application):
-    logger.info("Application startup for webhook...")
-    if not RAILWAY_PUBLIC_URL:
-        logger.error("RAILWAY_PUBLIC_URL n_est pas défini. Impossible de configurer le webhook.")
-        return
-
-    webhook_url = RAILWAY_PUBLIC_URL.rstrip('/') + "/webhook"
-    logger.info(f"Setting webhook to: {webhook_url}")
-    await application.bot.set_webhook(webhook_url, allowed_updates=Update.ALL_TYPES)
-    logger.info("Webhook set.")
-
-# Variable globale pour l_application PTB, utilisée par Uvicorn
-ptb_app = None
-
-def main() -> Application:
-    global ptb_app
+def main():
     if not TOKEN:
         logger.error("La variable d_environnement TELEGRAM_BOT_TOKEN n_est pas définie.")
         exit()
@@ -544,27 +500,16 @@ def main() -> Application:
         logger.error("La variable d_environnement SPREADSHEET_ID n_est pas définie.")
         exit()
 
-    # Utiliser post_init pour configurer le webhook après que la boucle d_événements soit active
-    application_builder = Application.builder().token(TOKEN)
-    if RAILWAY_PUBLIC_URL: # Configurer le webhook seulement si l_URL est disponible (mode webhook)
-        application_builder.post_init(startup_webhook)
-    
-    ptb_app = application_builder.build()
+    application = Application.builder().token(TOKEN).build()
 
-    ptb_app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, webhook_handler))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo))
     
-    logger.info("Application Telegram initialisée.")
-    return ptb_app.asgi
-
-# Exécuter main() pour initialiser ptb_app au chargement du module
-# Uvicorn cherchera `main:ptb_app` (ou le nom que vous spécifiez dans Procfile, ex: `main:application`)
-app = main() # `app` est maintenant l_objet ASGI que Uvicorn peut servir
+    logger.info("Application Telegram initialisée pour le mode polling.")
+    
+    # Lancer le bot en mode polling
+    logger.info("Lancement du bot en mode polling...")
+    application.run_polling()
 
 if __name__ == "__main__":
-    # Cette section est généralement pour le polling local, non utilisé sur Railway avec Uvicorn
-    logger.info("Lancement du bot en mode polling (pour test local uniquement)...")
-    if ptb_app:
-        ptb_app.run_polling()
-    else:
-        logger.error("L_application PTB n_a pas été initialisée.")
+    main()
 
