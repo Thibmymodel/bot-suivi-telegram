@@ -558,7 +558,7 @@ def main() -> Application:
 
 # Exécuter main() pour initialiser ptb_app au chargement du module
 # Uvicorn cherchera `main:ptb_app` (ou le nom que vous spécifiez dans Procfile, ex: `main:application`)
-application = main() # `application` est maintenant l_objet ASGI que Uvicorn peut servir
+app = main() # `app` est maintenant l_objet ASGI que Uvicorn peut servir
 
 if __name__ == "__main__":
     # Cette section est généralement pour le polling local, non utilisé sur Railway avec Uvicorn
