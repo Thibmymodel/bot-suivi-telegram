@@ -351,7 +351,8 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     else:
                         # Si la fusion finale du groupe n_est pas normalisable, ajouter l_élément original
                         merged_numbers_accumulator.append(current_ann)
-                        processed_indices_merge.add(i                        logger.info(f"  => Élément original conservé (groupe fusionné non normalisable): \t\t{current_ann['text']}\t\t")               
+                        processed_indices_merge.add(i)
+                        logger.info(f"  => Élément original conservé (groupe fusionné non normalisable): \t\t{current_ann['text']}\t\t")  
                 # S_assurer que tous les éléments non traités sont ajoutés (ceux qui n_ont formé aucun groupe)
                 for k_idx, k_ann in enumerate(number_annotations_list):
                     if k_idx not in processed_indices_merge:
