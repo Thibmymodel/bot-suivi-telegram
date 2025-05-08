@@ -5,19 +5,17 @@ import re
 import datetime
 import logging
 import os
-import traceback # Assurez-vous que traceback est importé
+import traceback 
 from difflib import get_close_matches
 
-from telegram import Update, Bot
+from fastapi import FastAPI, Request, HTTPException
+from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from PIL import Image, ImageOps
+from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.cloud import vision
-
-# NOUVEAU: Importations pour FastAPI
-from fastapi import FastAPI, Request, HTTPException, APIRouter
-import uvicorn # Pour le lancement local si besoin, mais surtout pour la commande de démarrage
+import uvicorn
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -27,52 +25,40 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL") # Pour configurer le webhook
-PORT = int(os.getenv("PORT", "8000")) # Port pour Uvicorn
+RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL") 
+PORT = int(os.getenv("PORT", "8000"))
 
-# Initialisation Google Sheets
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
+sheet = None
 if not google_creds_gspread_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
-    # exit() # Commenté pour permettre l_exécution dans des environnements sans cette variable pour tests unitaires
-try:
-    if google_creds_gspread_json_str:
+else:
+    try:
         creds_gspread_dict = json.loads(google_creds_gspread_json_str)
         gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
         gc = gspread.authorize(gspread_creds)
         sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
         logger.info("Connexion à Google Sheets réussie.")
-    else:
-        sheet = None # Pas de Google Sheets si les credentials ne sont pas là
-        logger.warning("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD non définie, Google Sheets désactivé.")
-except Exception as e:
-    sheet = None
-    logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
-    logger.error(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
+        logger.error(traceback.format_exc())
 
-# Initialisation Google Vision AI
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-vision_client = None # Initialiser à None
+vision_client = None
 if not google_creds_vision_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
-try:
-    if google_creds_vision_json_str:
+else:
+    try:
         creds_vision_dict = json.loads(google_creds_vision_json_str)
         vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
         vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
         logger.info("Client Google Vision AI initialisé avec succès.")
-    else:
-        logger.warning("GOOGLE_APPLICATION_CREDENTIALS non définie, Google Vision AI désactivé.")
-except Exception as e:
-    logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
-    logger.error(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
+        logger.error(traceback.format_exc())
 
-# NOUVEAU: Création de l_application FastAPI
 app = FastAPI()
-
-# Initialisation du bot Telegram et de l_application
 ptb_application = Application.builder().token(TOKEN).build()
-# Le bot est déjà initialisé par ptb_application.bot
 already_processed = set()
 
 with open("known_handles.json", "r", encoding="utf-8") as f:
@@ -224,8 +210,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         new_file = await ptb_application.bot.get_file(file_id)
         img_bytes = await new_file.download_as_bytearray()
-        content_vision = bytes(img_bytes)
-
+        
         image_pil = Image.open(io.BytesIO(img_bytes))
         width, height = image_pil.size
         
@@ -243,68 +228,163 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"handle_photo: Ratio de crop ajusté à {crop_height_ratio} pour Twitter (détecté via nom assistant).")
         
         cropped_image = image_pil.crop((0, 0, width, int(height * crop_height_ratio)))
-        # Convertir l'image recadrée en bytes pour l'API Vision
-        buffer = io.BytesIO()
-        cropped_image.save(buffer, format="PNG") # Vous pouvez choisir le format que vous préférez
-        content_vision = buffer.getvalue()
+        byte_arr = io.BytesIO()
+        cropped_image.save(byte_arr, format='PNG')
+        content_vision = byte_arr.getvalue()
 
         if not vision_client:
             logger.error("handle_photo: Client Google Vision AI non initialisé. Impossible de traiter l'image.")
             message_status_general = f"Erreur interne: Client Vision AI non disponible pour {assistant}."
-            raise Exception("Client Vision AI non initialisé")
+            raise Exception("Client Vision AI non initialisé") # Le finally gèrera l'envoi du message
             
         image_for_vision = vision.Image(content=content_vision)
-        response = vision_client.text_detection(image=image_for_vision)
+        response = vision_client.document_text_detection(image=image_for_vision) # Utilisation de document_text_detection pour une meilleure robustesse
         texts_annotations_vision = response.text_annotations
 
         if response.error.message:
             logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
-            await ptb_application.bot.send_message(chat_id=GROUP_ID, text=f"Erreur OCR Google Vision pour {assistant}: {response.error.message}", message_thread_id=message.message_thread_id)
-            return
-
-        ocr_text_full = texts_annotations_vision[0].description if texts_annotations_vision and len(texts_annotations_vision) > 0 else ""
-        logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
-
-        if not ocr_text_full:
+            message_status_general = f"Erreur OCR Google Vision pour {assistant}: {response.error.message}"
+            # Pas besoin de return ici, le finally s'en chargera
+        elif not texts_annotations_vision or not texts_annotations_vision[0].description:
             logger.warning(f"handle_photo: OCR n'a retourné aucun texte pour {assistant}.")
-            await ptb_application.bot.send_message(chat_id=GROUP_ID, text=f"L_OCR n_a retourné aucun texte pour l_image de {assistant}.", message_thread_id=message.message_thread_id)
-            return
+            message_status_general = f"L_OCR n_a retourné aucun texte pour l_image de {assistant}."
+        else:
+            ocr_text_full = texts_annotations_vision[0].description
+            logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
 
-        ocr_lower = ocr_text_full.lower()
-        if "tiktok" in ocr_lower or "j_aime" in ocr_lower or "j’aime" in ocr_lower:
-            reseau = "tiktok"
-        elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnements" in ocr_lower or "abonnés" in ocr_lower:
-            reseau = "twitter"
-        elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
-            reseau = "instagram"
-        elif "threads" in ocr_lower:
-            reseau = "threads"
-        elif "beacons.ai" in ocr_lower:
-            if "twitter" in ocr_lower:
+            ocr_lower = ocr_text_full.lower()
+            if "tiktok" in ocr_lower or "j_aime" in ocr_lower or "j’aime" in ocr_lower:
+                reseau = "tiktok"
+            elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnements" in ocr_lower or "abonnés" in ocr_lower:
                 reseau = "twitter"
-            else:
+            elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
                 reseau = "instagram"
-        else: 
-            reseau = temp_reseau_detect
-            logger.info(f"Réseau non clairement identifié par OCR, déduit de/mis par défaut à: {reseau}")
-        logger.info(f"handle_photo: Réseau identifié pour {assistant}: {reseau}")
+            elif "threads" in ocr_lower:
+                reseau = "threads"
+            elif "beacons.ai" in ocr_lower:
+                if "twitter" in ocr_lower:
+                    reseau = "twitter"
+                else:
+                    reseau = "instagram"
+            else: 
+                reseau = temp_reseau_detect
+                logger.info(f"Réseau non clairement identifié par OCR, déduit de/mis par défaut à: {reseau}")
+            logger.info(f"handle_photo: Réseau identifié pour {assistant}: {reseau}")
 
-        usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
-        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-        username = "Non trouvé"
-        cleaned_usernames = [re.sub(r"[^a-zA-Z0-9_.-]", "", u).lower() for u in usernames_found]
-        for u_cleaned in cleaned_usernames:
-            if u_cleaned in [h.lower() for h in reseau_handles]:
-                username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
-                if username != "Non trouvé": break
-        if username == "Non trouvé":
-            for u in usernames_found:
-                matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
-                if matches: username = matches[0]; break
-        if username == "Non trouvé" and usernames_found: username = usernames_found[0]
-        urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text_full, re.IGNORECASE)
-        if username == "Non trouvé" and urls:
-            for _, u_from_url in urls:
-                match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
-                if match_url: username = match_url[0]; brea
-(Content truncated due to size limit. Use line ranges to read in chunks)
+            usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
+            reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
+            username = "Non trouvé"
+            cleaned_usernames = [re.sub(r"[^a-zA-Z0-9_.-]", "", u).lower() for u in usernames_found]
+            for u_cleaned in cleaned_usernames:
+                if u_cleaned in [h.lower() for h in reseau_handles]:
+                    username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
+                    if username != "Non trouvé": break
+            if username == "Non trouvé":
+                for u in usernames_found:
+                    matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
+                    if matches: username = matches[0]; break
+            if username == "Non trouvé" and usernames_found: username = usernames_found[0]
+            urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text_full, re.IGNORECASE)
+            if username == "Non trouvé" and urls:
+                for _, u_from_url in urls:
+                    match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
+                    if match_url: username = match_url[0]; break
+                    if username == "Non trouvé": username = u_from_url # Correction: assigner u_from_url si pas de match
+            username = corriger_username(username, reseau)
+            logger.info(f"🕵️ Username final pour {assistant}: 	'{username}' (réseau : {reseau})")
+
+            abonnés = None
+            if reseau == "tiktok":
+                mots_cles_tiktok = ["followers", "abonnés", "abonné", "fans", "abos"]
+                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, f"tiktok ({assistant})")
+            elif reseau == "instagram":
+                mots_cles_instagram = ["followers", "abonnés", "abonné", "suivi(e)s", "suivis"]
+                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, f"instagram ({assistant})")
+            elif reseau == "twitter":
+                mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"]
+                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, f"twitter ({assistant})")
+            elif reseau == "threads":
+                 mots_cles_threads = ["followers", "abonnés", "abonné"]
+                 abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, f"threads ({assistant})")
+            else:
+                mots_cles_generiques = ["followers", "abonnés", "abonné", "fans", "suivi(e)s", "suivis"]
+                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau}, {assistant})")
+
+            logger.info(f"handle_photo: Abonnés extraits pour {assistant} ({reseau}): {abonnés}")
+
+            if username != "Non trouvé" and abonnés is not None:
+                donnees_extraites_ok = True
+                action_tentee = True
+                try:
+                    if sheet: 
+                        sheet.append_row([today, assistant, reseau, username, abonnés, ""])
+                        logger.info(f"Données ajoutées à Google Sheets pour {assistant}: {today}, {reseau}, {username}, {abonnés}")
+                        message_status_general = f"OK ✅ {username} ({reseau}) -> {abonnés} followers."
+                    else:
+                        logger.warning(f"Google Sheets non disponible. Données non enregistrées pour {assistant}.")
+                        message_status_general = f"OK (Sheets OFF) ✅ {username} ({reseau}) -> {abonnés} followers."
+                except Exception as e_gsheet:
+                    logger.error(f"Erreur lors de l_écriture sur Google Sheets pour {assistant}: {e_gsheet}")
+                    logger.error(traceback.format_exc())
+                    message_status_general = f"⚠️ Erreur Sheets pour {assistant} ({username}, {reseau}, {abonnés}). Détails dans les logs."
+            else:
+                action_tentee = True
+                logger.warning(f"handle_photo: Données incomplètes pour {assistant}. Username: {username}, Abonnés: {abonnés}")
+                message_status_general = f"❓ Données incomplètes pour {assistant}. Username: 	'{username}'	, Abonnés: 	'{abonnés}'	. Réseau: {reseau}. OCR brut: {ocr_text_full[:150]}..."
+
+    except Exception as e:
+        logger.error(f"❌ Erreur globale dans handle_photo pour l'assistant {assistant}:")
+        logger.error(traceback.format_exc())
+        message_status_general = f"🆘 Erreur critique bot pour {assistant}. Détails dans les logs."
+    
+    finally:
+        if message_status_general and GROUP_ID and hasattr(message, 'message_thread_id'): # S'assurer que message et message_thread_id existent
+            try:
+                await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=message.message_thread_id)
+                logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
+            except Exception as e_send_status:
+                logger.error(f"Erreur lors de l'envoi du message de statut au groupe pour {assistant}: {e_send_status}")
+                logger.error(traceback.format_exc())
+        elif not message_status_general and action_tentee:
+            logger.warning(f"handle_photo: Un message de statut aurait dû être généré pour {assistant} mais ne l'a pas été.")
+        elif not action_tentee:
+            logger.info("handle_photo: Aucune action de traitement OCR n'a été tentée (probablement image déjà traitée ou non pertinente).")
+
+# CORRIGÉ: Ajout du handler pour les photos directement ici
+ptb_application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+@app.post("/") 
+async def webhook_handler_post(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, ptb_application.bot)
+        await ptb_application.process_update(update)
+        return {"status": "ok"}
+    except json.JSONDecodeError:
+        logger.error("telegram_webhook: Erreur de décodage JSON.")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as e:
+        logger.error(f"telegram_webhook: Erreur lors du traitement de la mise à jour: {e}")
+        logger.error(traceback.format_exc())
+        # Ne pas lever d'exception ici pour que Telegram ne reçoive pas d'erreur 500 et ne réessaie pas indéfiniment
+        return {"status": "error processing update"} 
+
+@app.get("/") 
+async def root():
+    return {"message": "FastAPI server is running"}
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        # S'assurer que RAILWAY_PUBLIC_URL se termine par un slash pour la base, puis enlever tout slash en trop.
+        base_url = RAILWAY_PUBLIC_URL.rstrip("/")
+        webhook_url = f"{base_url}/" # Le endpoint est à la racine "/"
+        await ptb_application.bot.set_webhook(url=webhook_url, allowed_updates=["message"])
+        logger.info(f"Webhook configuré sur: {webhook_url}")
+    except Exception as e:
+        logger.error(f"Erreur lors de la configuration du webhook: {e}")
+        logger.error(traceback.format_exc())
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
