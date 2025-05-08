@@ -5,8 +5,9 @@ import re
 import datetime
 import logging
 import os
-import traceback # Assurez-vous que traceback est importé
+import traceback 
 from difflib import get_close_matches
+import asyncio # Ajout pour la gestion de la boucle d_événement
 
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -14,6 +15,10 @@ from PIL import Image, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.cloud import vision
+
+# NOUVEAU: Importations pour FastAPI
+from fastapi import FastAPI, Request, HTTPException
+import uvicorn # Pour le lancement local si besoin, mais surtout pour la commande de démarrage
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -23,39 +28,51 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL") # Pour configurer le webhook
+PORT = int(os.getenv("PORT", "8000")) # Port pour Uvicorn
 
 # Initialisation Google Sheets
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
 if not google_creds_gspread_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
-    # exit() # Commenté pour permettre l_exécution dans des environnements sans cette variable pour tests unitaires
 try:
-    creds_gspread_dict = json.loads(google_creds_gspread_json_str)
-    gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    gc = gspread.authorize(gspread_creds)
-    sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-    logger.info("Connexion à Google Sheets réussie.")
+    if google_creds_gspread_json_str: # Seulement si la variable est définie
+        creds_gspread_dict = json.loads(google_creds_gspread_json_str)
+        gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        gc = gspread.authorize(gspread_creds)
+        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+        logger.info("Connexion à Google Sheets réussie.")
+    else:
+        sheet = None # Pas de Google Sheets si les credentials ne sont pas là
+        logger.warning("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD non définie, Google Sheets désactivé.")
 except Exception as e:
+    sheet = None
     logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
     logger.error(traceback.format_exc())
-    # exit() # Commenté pour permettre l_exécution
 
 # Initialisation Google Vision AI
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+vision_client = None # Initialiser à None
 if not google_creds_vision_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
-    # exit()
 try:
-    creds_vision_dict = json.loads(google_creds_vision_json_str)
-    vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
-    vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
-    logger.info("Client Google Vision AI initialisé avec succès.")
+    if google_creds_vision_json_str: # Seulement si la variable est définie
+        creds_vision_dict = json.loads(google_creds_vision_json_str)
+        vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
+        vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
+        logger.info("Client Google Vision AI initialisé avec succès.")
+    else:
+        logger.warning("GOOGLE_APPLICATION_CREDENTIALS non définie, Google Vision AI désactivé.")
 except Exception as e:
     logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
     logger.error(traceback.format_exc())
-    # exit()
 
-bot = Bot(TOKEN)
+# NOUVEAU: Création de l_application FastAPI
+app = FastAPI()
+
+# Initialisation du bot Telegram et de l_application
+ptb_application = Application.builder().token(TOKEN).build()
+# Le bot est déjà initialisé par ptb_application.bot
 already_processed = set()
 
 with open("known_handles.json", "r", encoding="utf-8") as f:
@@ -92,14 +109,13 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
             valeur = str(int(float(nombre_str_clean.replace("m", "")) * 1000000))
         else:
             if not nombre_str_clean.isdigit():
-                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n'est pas un digit après nettoyage.")
+                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n_est pas un digit après nettoyage.")
                 return None
             valeur = str(int(nombre_str_clean))
     except ValueError:
         logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_clean}'")
         return None
     return valeur
-
 
 def fusionner_nombres_adjacents(number_annotations_list_input, reseau_nom_log="inconnu"):
     if not number_annotations_list_input or len(number_annotations_list_input) < 2:
@@ -188,7 +204,7 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             return None
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre total d_annotations reçues: {len(text_annotations)}")
-        if "instagram" in reseau_nom.lower(): # Log spécifique pour Instagram
+        if "instagram" in reseau_nom.lower():
             logger.info(f"extraire_followers_spatial ({reseau_nom}): DÉTAIL ANNOTATIONS BRUTES (pour débogage fusion Instagram):")
             for idx, ann_detail in enumerate(text_annotations[1:]):
                 desc = ann_detail.description
@@ -361,50 +377,44 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         already_processed.add(file_id)
 
-        new_file = await context.bot.get_file(file_id)
+        new_file = await ptb_application.bot.get_file(file_id) # Utiliser ptb_application.bot
         img_bytes = await new_file.download_as_bytearray()
         img_content = bytes(img_bytes)
 
-        image = Image.open(io.BytesIO(img_content))
-        width, height = image.size
+        image_pil = Image.open(io.BytesIO(img_content))
+        width, height = image_pil.size
         
-        # MODIFICATION: Ajustement du recadrage pour Twitter
         crop_height_ratio = 0.4 
-        # Déterminer le réseau avant le crop pour ajuster le ratio si c_est Twitter
-        # Pour cela, on fait une première passe OCR sur une plus grande partie de l_image
-        # ou on se base sur le nom de l_assistant si possible.
-        # Pour l_instant, on va faire une détection de réseau basique sur le nom de l_assistant
-        # et on affinera si besoin avec une pré-OCR.
-        
-        # Tentative de détection du réseau à partir du nom de l_assistant (nom du topic)
-        # Cela suppose que le nom du topic contient le nom du réseau.
-        # Si ce n_est pas fiable, il faudra une pré-analyse OCR.
-        temp_reseau_detect = "instagram" # Par défaut
+        temp_reseau_detect = "instagram"
         if assistant:
             assistant_lower = assistant.lower()
-            if "twitter" in assistant_lower or " x " in assistant_lower: # " x " pour éviter confusion avec d_autres mots
+            if "twitter" in assistant_lower or " x " in assistant_lower:
                 temp_reseau_detect = "twitter"
             elif "tiktok" in assistant_lower:
                 temp_reseau_detect = "tiktok"
-            # Instagram est souvent le cas par défaut ou moins marqué
 
         if temp_reseau_detect == "twitter":
-            crop_height_ratio = 0.65 # Ratio spécifique pour Twitter
+            crop_height_ratio = 0.65
             logger.info(f"handle_photo: Ratio de crop ajusté à {crop_height_ratio} pour Twitter (détecté via nom assistant).")
         
-        cropped_image = image.crop((0, 0, width, int(height * crop_height_ratio)))
+        cropped_image = image_pil.crop((0, 0, width, int(height * crop_height_ratio)))
         enhanced_image = ImageOps.autocontrast(cropped_image)
         byte_arr = io.BytesIO()
         enhanced_image.save(byte_arr, format='PNG')
         content_vision = byte_arr.getvalue()
 
+        if not vision_client: # Vérifier si vision_client est initialisé
+            logger.error("handle_photo: Client Google Vision AI non initialisé. Impossible de traiter l_image.")
+            message_status_general = f"Erreur interne: Client Vision AI non disponible pour {assistant}."
+            raise Exception("Client Vision AI non initialisé")
+            
         image_vision = vision.Image(content=content_vision)
         response = vision_client.text_detection(image=image_vision)
         texts_annotations_vision = response.text_annotations
 
         if response.error.message:
             logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
-            await bot.send_message(chat_id=GROUP_ID, text=f"Erreur OCR Google Vision pour {assistant}: {response.error.message}", message_thread_id=message.message_thread_id)
+            await ptb_application.bot.send_message(chat_id=GROUP_ID, text=f"Erreur OCR Google Vision pour {assistant}: {response.error.message}", message_thread_id=message.message_thread_id)
             return
 
         ocr_text_full = texts_annotations_vision[0].description if texts_annotations_vision and len(texts_annotations_vision) > 0 else ""
@@ -412,7 +422,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not ocr_text_full:
             logger.warning(f"handle_photo: OCR n_a retourné aucun texte pour {assistant}.")
-            await bot.send_message(chat_id=GROUP_ID, text=f"L_OCR n_a retourné aucun texte pour l_image de {assistant}.", message_thread_id=message.message_thread_id)
+            await ptb_application.bot.send_message(chat_id=GROUP_ID, text=f"L_OCR n_a retourné aucun texte pour l_image de {assistant}.", message_thread_id=message.message_thread_id)
             return
 
         ocr_lower = ocr_text_full.lower()
@@ -428,7 +438,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "twitter" in ocr_lower: reseau = "twitter"
             else: reseau = "instagram"
         else: 
-            reseau = temp_reseau_detect # Utiliser le réseau détecté via nom d_assistant si rien d_autre
+            reseau = temp_reseau_detect
             logger.info(f"Réseau non clairement identifié par OCR, déduit de/mis par défaut à: {reseau}")
         logger.info(f"handle_photo: Réseau identifié pour {assistant}: {reseau}")
 
@@ -477,9 +487,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             donnees_extraites_ok = True
             action_tentee = True
             try:
-                sheet.append_row([today, assistant, reseau, username, abonnés, ""])
-                logger.info(f"Données ajoutées à Google Sheets pour {assistant}: {today}, {reseau}, {username}, {abonnés}")
-                message_status_general = f"OK ✅ {username} ({reseau}) -> {abonnés} followers."
+                if sheet: # Vérifier si sheet est initialisé
+                    sheet.append_row([today, assistant, reseau, username, abonnés, ""])
+                    logger.info(f"Données ajoutées à Google Sheets pour {assistant}: {today}, {reseau}, {username}, {abonnés}")
+                    message_status_general = f"OK ✅ {username} ({reseau}) -> {abonnés} followers."
+                else:
+                    logger.warning(f"Google Sheets non disponible. Données non enregistrées pour {assistant}.")
+                    message_status_general = f"OK (Sheets OFF) ✅ {username} ({reseau}) -> {abonnés} followers."
             except Exception as e_gsheet:
                 logger.error(f"Erreur lors de l_écriture sur Google Sheets pour {assistant}: {e_gsheet}")
                 logger.error(traceback.format_exc())
@@ -498,14 +512,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if message_status_general and GROUP_ID:
             try:
                 target_thread_id = message.message_thread_id if hasattr(message, 'message_thread_id') else None
-                if not target_thread_id and reply_message_exists_for_error_handling:
-                    # Fallback si on n_a pas pu obtenir le thread_id du message entrant mais qu_on a celui du reply
-                    # Cela peut arriver si le message n_est pas directement dans un topic mais y répond
-                    # Cependant, le bot est censé répondre au topic où la commande a été initiée.
-                    # Le message.message_thread_id devrait être le bon.
-                    pass 
-                
-                await bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=target_thread_id)
+                await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=target_thread_id)
                 logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
             except Exception as e_send_status:
                 logger.error(f"Erreur lors de l_envoi du message de statut au groupe pour {assistant}: {e_send_status}")
@@ -515,34 +522,61 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif not action_tentee:
             logger.info("handle_photo: Aucune action de traitement OCR n_a été tentée (probablement image déjà traitée ou non pertinente).")
 
-async def main_bot():
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
-    
-    mode_polling_str = os.getenv("MODE_POLLING", "true").lower()
-    if mode_polling_str == "true":
-        logger.info("Démarrage du bot en mode polling...")
-        await application.run_polling()
+# NOUVEAU: Endpoint FastAPI pour le webhook Telegram
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, ptb_application.bot)
+        await ptb_application.process_update(update)
+        return {"status": "ok"}
+    except json.JSONDecodeError:
+        logger.error("telegram_webhook: Erreur de décodage JSON.")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as e:
+        logger.error(f"telegram_webhook: Erreur lors du traitement de la mise à jour: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# NOUVEAU: Fonction pour configurer le webhook au démarrage (si nécessaire)
+async def setup_webhook():
+    mode_polling_str = os.getenv("MODE_POLLING", "false").lower() # Par défaut à false pour webhook
+    if mode_polling_str == "false" and RAILWAY_PUBLIC_URL:
+        webhook_url = f"{RAILWAY_PUBLIC_URL}/webhook"
+        try:
+            current_webhook = await ptb_application.bot.get_webhook_info()
+            if current_webhook.url != webhook_url:
+                await ptb_application.bot.set_webhook(url=webhook_url)
+                logger.info(f"Webhook configuré sur: {webhook_url}")
+            else:
+                logger.info(f"Webhook déjà configuré sur: {webhook_url}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la configuration du webhook: {e}")
+            logger.error(traceback.format_exc())
     else:
-        # Configuration pour webhook (simplifié, nécessite un serveur web comme FastAPI/Uvicorn)
-        # Le Dockerfile est configuré pour lancer uvicorn main:app --host 0.0.0.0 --port $PORT
-        # Il faudrait une vraie app FastAPI ici.
-        # Pour l_instant, si MODE_POLLING n_est pas true, on ne fait rien dans ce script standalone.
-        logger.info("Mode Webhook configuré (nécessite un serveur d_application externe comme FastAPI/Uvicorn).")
-        logger.info("Ce script ne démarrera pas de serveur webhook lui-même.")
-        logger.info("Assurez-vous que votre infrastructure (ex: Railway) lance ce bot via une app ASGI (comme avec uvicorn main:app).")
-        # Exemple de ce à quoi ressemblerait l_intégration avec FastAPI:
-        # from fastapi import FastAPI
-        # app = FastAPI()
-        # @app.post("/webhook") async def webhook(update_data: dict):
-        #     update = Update.de_json(update_data, bot)
-        #     await application.process_update(update)
-        #     return {"status": "ok"}
-        # Pour le déploiement, le point d_entrée serait `uvicorn main:app` et non `python main.py`
-        # Et TELEGRAM_BOT_TOKEN, RAILWAY_PUBLIC_URL etc. seraient utilisés pour set_webhook.
-        pass # En mode non-polling, ce script python direct ne fait rien de plus.
+        logger.info("Webhook non configuré (MODE_POLLING=true ou RAILWAY_PUBLIC_URL non défini).")
+
+# NOUVEAU: Événement de démarrage FastAPI pour configurer le webhook
+@app.on_event("startup")
+async def on_startup():
+    ptb_application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
+    await setup_webhook() # Configurer le webhook au démarrage de FastAPI
+
+async def main_polling():
+    ptb_application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
+    logger.info("Démarrage du bot en mode polling...")
+    await ptb_application.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main_bot())
+    mode_polling_str = os.getenv("MODE_POLLING", "false").lower()
+    if mode_polling_str == "true":
+        asyncio.run(main_polling())
+    else:
+        # En mode webhook, Uvicorn se charge de lancer l_application FastAPI "app"
+        # La configuration du webhook se fait via l_événement startup de FastAPI
+        logger.info(f"Démarrage du serveur Uvicorn sur le port {PORT} pour le mode webhook...")
+        logger.info("L_application FastAPI 'app' est prête à être servie par Uvicorn.")
+        logger.info("Assurez-vous que votre Procfile ou commande de démarrage est: uvicorn main:app --host 0.0.0.0 --port $PORT")
+        # uvicorn.run(app, host="0.0.0.0", port=PORT) # Ne pas lancer uvicorn ici directement, c_est le rôle du Procfile/CMD
+        pass
 
