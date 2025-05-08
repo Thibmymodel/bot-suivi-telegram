@@ -235,19 +235,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not vision_client:
             logger.error("handle_photo: Client Google Vision AI non initialisé. Impossible de traiter l'image.")
             message_status_general = f"Erreur interne: Client Vision AI non disponible pour {assistant}."
-            raise Exception("Client Vision AI non initialisé") # Le finally gèrera l'envoi du message
+            raise Exception("Client Vision AI non initialisé") 
             
         image_for_vision = vision.Image(content=content_vision)
-        response = vision_client.document_text_detection(image=image_for_vision) # Utilisation de document_text_detection pour une meilleure robustesse
+        response = vision_client.document_text_detection(image=image_for_vision) 
         texts_annotations_vision = response.text_annotations
 
         if response.error.message:
             logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
             message_status_general = f"Erreur OCR Google Vision pour {assistant}: {response.error.message}"
-            # Pas besoin de return ici, le finally s'en chargera
         elif not texts_annotations_vision or not texts_annotations_vision[0].description:
             logger.warning(f"handle_photo: OCR n'a retourné aucun texte pour {assistant}.")
-            message_status_general = f"L_OCR n_a retourné aucun texte pour l_image de {assistant}."
+            message_status_general = f"L_OCR n'a retourné aucun texte pour l'image de {assistant}."
         else:
             ocr_text_full = texts_annotations_vision[0].description
             logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
@@ -289,7 +288,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for _, u_from_url in urls:
                     match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
                     if match_url: username = match_url[0]; break
-                    if username == "Non trouvé": username = u_from_url # Correction: assigner u_from_url si pas de match
+                    if username == "Non trouvé": username = u_from_url 
             username = corriger_username(username, reseau)
             logger.info(f"🕵️ Username final pour {assistant}: 	'{username}' (réseau : {reseau})")
 
@@ -324,7 +323,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.warning(f"Google Sheets non disponible. Données non enregistrées pour {assistant}.")
                         message_status_general = f"OK (Sheets OFF) ✅ {username} ({reseau}) -> {abonnés} followers."
                 except Exception as e_gsheet:
-                    logger.error(f"Erreur lors de l_écriture sur Google Sheets pour {assistant}: {e_gsheet}")
+                    logger.error(f"Erreur lors de l'écriture sur Google Sheets pour {assistant}: {e_gsheet}")
                     logger.error(traceback.format_exc())
                     message_status_general = f"⚠️ Erreur Sheets pour {assistant} ({username}, {reseau}, {abonnés}). Détails dans les logs."
             else:
@@ -338,7 +337,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_status_general = f"🆘 Erreur critique bot pour {assistant}. Détails dans les logs."
     
     finally:
-        if message_status_general and GROUP_ID and hasattr(message, 'message_thread_id'): # S'assurer que message et message_thread_id existent
+        if message_status_general and GROUP_ID and hasattr(message, 'message_thread_id'): 
             try:
                 await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=message.message_thread_id)
                 logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
@@ -350,7 +349,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif not action_tentee:
             logger.info("handle_photo: Aucune action de traitement OCR n'a été tentée (probablement image déjà traitée ou non pertinente).")
 
-# CORRIGÉ: Ajout du handler pour les photos directement ici
 ptb_application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
 @app.post("/") 
@@ -366,7 +364,6 @@ async def webhook_handler_post(request: Request):
     except Exception as e:
         logger.error(f"telegram_webhook: Erreur lors du traitement de la mise à jour: {e}")
         logger.error(traceback.format_exc())
-        # Ne pas lever d'exception ici pour que Telegram ne reçoive pas d'erreur 500 et ne réessaie pas indéfiniment
         return {"status": "error processing update"} 
 
 @app.get("/") 
@@ -376,9 +373,9 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     try:
-        # S'assurer que RAILWAY_PUBLIC_URL se termine par un slash pour la base, puis enlever tout slash en trop.
+        await ptb_application.initialize() # CORRECTION: Initialisation de l'application PTB
         base_url = RAILWAY_PUBLIC_URL.rstrip("/")
-        webhook_url = f"{base_url}/" # Le endpoint est à la racine "/"
+        webhook_url = f"{base_url}/" 
         await ptb_application.bot.set_webhook(url=webhook_url, allowed_updates=["message"])
         logger.info(f"Webhook configuré sur: {webhook_url}")
     except Exception as e:
