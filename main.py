@@ -1,352 +1,931 @@
-#!/usr/bin/env python3
+"""
+Ce bot Telegram a pour objectif d_extraire des informations de captures d_écran de profils de réseaux sociaux,
+notamment le nom d_utilisateur et le nombre de followers, en utilisant Google Vision AI pour l_OCR.
+Il enregistre ensuite ces données dans une feuille Google Sheets.
+
+Fonctionnalités principales :
+- Réception d_images (captures d_écran) via Telegram.
+- Identification de l_assistant (basé sur le nom du topic Telegram si l_image est une réponse à la création du topic).
+- Détection du réseau social (Instagram, Twitter, TikTok, etc.) à partir du contenu de l_image.
+- Extraction du nom d_utilisateur et du nombre de followers en utilisant Google Vision AI.
+- Normalisation des nombres de followers (gestion des "K", "M", espaces).
+- Enregistrement des données extraites (Date, Assistant, Réseau, Username, Abonnés) dans Google Sheets.
+- Envoi de messages de statut (succès ou échec) sur Telegram dans le topic "General".
+- Fonctionnement en mode webhook avec FastAPI/Uvicorn.
+"""
+import asyncio
 import json
 import io
 import re
 import datetime
 import logging
 import os
-import traceback 
+import traceback
+from typing import Optional, List, Dict, Any, Tuple
 from difflib import get_close_matches
 
-from fastapi import FastAPI, Request, HTTPException
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from PIL import Image
+from telegram import Update, Bot, PhotoSize
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    TypeHandler,
+    CallbackContext,
+)
+from telegram.constants import ParseMode
+from PIL import Image, ImageOps, UnidentifiedImageError
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.cloud import vision
+import fastapi
 import uvicorn
 
+# Configuration du logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main") # Nommer le logger "main" pour correspondre aux logs précédents
 
+# Variables d_environnement et constantes
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL") 
-PORT = int(os.getenv("PORT", "8000"))
+RAILWAY_PUBLIC_URL = os.getenv("RAILWAY_PUBLIC_URL")
+MODE_POLLING = os.getenv("MODE_POLLING", "false").lower() == "true"
 
-google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
-sheet = None
-if not google_creds_gspread_json_str:
-    logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
-else:
-    try:
-        creds_gspread_dict = json.loads(google_creds_gspread_json_str)
-        gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        gc = gspread.authorize(gspread_creds)
-        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-        logger.info("Connexion à Google Sheets réussie.")
-    except Exception as e:
-        logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
-        logger.error(traceback.format_exc())
+if not TOKEN:
+    logger.error("La variable d_environnement TELEGRAM_BOT_TOKEN n_est pas définie.")
+    exit()
+if not GROUP_ID:
+    logger.error("La variable d_environnement TELEGRAM_GROUP_ID n_est pas définie.")
+    exit()
+if not SPREADSHEET_ID:
+    logger.error("La variable d_environnement SPREADSHEET_ID n_est pas définie.")
+    exit()
 
-google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-vision_client = None
-if not google_creds_vision_json_str:
-    logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
-else:
-    try:
-        creds_vision_dict = json.loads(google_creds_vision_json_str)
-        vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
-        vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
-        logger.info("Client Google Vision AI initialisé avec succès.")
-    except Exception as e:
-        logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
-        logger.error(traceback.format_exc())
+# Initialisation Google Sheets
+gspread_creds: Optional[ServiceAccountCredentials] = None
+gc: Optional[gspread.Client] = None
+sheet: Optional[gspread.Worksheet] = None
+try:
+    google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
+    if not google_creds_gspread_json_str:
+        logger.error(
+            "La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie."
+        )
+        exit()
+    creds_gspread_dict = json.loads(google_creds_gspread_json_str)
+    gspread_creds = ServiceAccountCredentials.from_service_account_info(
+        creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(gspread_creds)
+    sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+    logger.info("Connexion à Google Sheets réussie.")
+except Exception as e:
+    logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
+    logger.error(traceback.format_exc())
+    exit()
 
-app = FastAPI()
-ptb_application = Application.builder().token(TOKEN).build()
-already_processed = set()
+# Initialisation Google Vision AI
+vision_client: Optional[vision.ImageAnnotatorClient] = None
+try:
+    google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if not google_creds_vision_json_str:
+        logger.error(
+            "La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie."
+        )
+        exit()
+    creds_vision_dict = json.loads(google_creds_vision_json_str)
+    vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
+    vision_client = vision.ImageAnnotatorClient(credentials=vision_creds)
+    logger.info("Client Google Vision AI initialisé avec succès.")
+except Exception as e:
+    logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
+    logger.error(traceback.format_exc())
+    exit()
 
-with open("known_handles.json", "r", encoding="utf-8") as f:
-    KNOWN_HANDLES = json.load(f)
+# Chargement des handles connus
+KNOWN_HANDLES: Dict[str, List[str]] = {}
+try:
+    with open("known_handles.json", "r", encoding="utf-8") as f:
+        KNOWN_HANDLES = json.load(f)
+except FileNotFoundError:
+    logger.warning(
+        "Le fichier known_handles.json n_a pas été trouvé. L_identification des réseaux sera moins précise."
+    )
+except json.JSONDecodeError:
+    logger.error(
+        "Erreur lors du décodage de known_handles.json. Le fichier est peut-être corrompu."
+    )
+
+# Configuration des réseaux sociaux et mots-clés
+RESEAUX_SOCIALS_KEYWORDS = {
+    "instagram": [
+        "instagram",
+        "followers",
+        "abonnés",
+        "suivi(e)s",
+        "publications",
+        "j_aime",
+        "profil",
+        "reels",
+    ],
+    "twitter": [
+        "twitter",
+        "x.com",
+        "abonnements",
+        "abonnés",
+        "followers",
+        "following",
+        "tweets",
+        "profil",
+    ],
+    "tiktok": ["tiktok", "abonnements", "followers", "j_aime", "profil", "amis", "pour toi"],
+    "threads": ["threads", "followers", "abonnés", "profil"],
+    "facebook": ["facebook", "amis", "followers", "j_aime", "publications", "profil"],
+    "linkedin": ["linkedin", "relations", "abonné(e)s", "profil", "posts"],
+    "youtube": ["youtube", "abonnés", "subscribers", "vidéos", "chaîne", "channel"],
+    "twitch": ["twitch", "followers", "suivis", "chaîne", "stream"],
+    "snapchat": ["snapchat", "amis", "score", "profil"],
+    "pinterest": ["pinterest", "abonnés", "épingles", "tableaux", "profil"],
+}
+
+FOLLOWERS_KEYWORDS_SPECIFIC = {
+    "instagram": ["followers", "abonnés", "suivi(e)s"],
+    "twitter": ["abonnés", "followers"],
+    "tiktok": ["followers", "abonnés"],
+    "threads": ["followers", "abonnés"],
+    "facebook": ["followers", "amis"],  # Amis peut être un indicateur sur FB
+    "linkedin": ["abonné(e)s", "relations"],
+    "youtube": ["abonnés", "subscribers"],
+    "twitch": ["followers"],
+    "snapchat": [],  # Snapchat ne montre pas publiquement les followers de la même manière
+    "pinterest": ["abonnés"],
+}
+
+USERNAME_PATTERNS = {
+    "instagram": r"@?([a-zA-Z0-9_.]{1,30})",
+    "twitter": r"@?([a-zA-Z0-9_]{1,15})",
+    "tiktok": r"@?([a-zA-Z0-9_.-]+)",
+    "threads": r"@?([a-zA-Z0-9_.]{1,30})",  # Similaire à Instagram
+}
+
+ASSISTANT_TOPIC_KEYWORDS = ["SUIVI", "Suivi", "suivi"]
+
+ptb_application: Application = Application.builder().token(TOKEN).build()
+fastapi_app = fastapi.FastAPI()
+
+def get_assistant_from_topic_name(topic_name: Optional[str]) -> str:
+    if not topic_name:
+        return "INCONNU"
+    for keyword in ASSISTANT_TOPIC_KEYWORDS:
+        if topic_name.startswith(keyword):
+            assistant_name = topic_name[len(keyword) :].strip()
+            if assistant_name:
+                return assistant_name
+    return topic_name  # Si aucun mot-clé, le nom du topic est peut-être le nom de l_assistant
 
 def corriger_username(username: str, reseau: str) -> str:
     if reseau == "instagram" and username.startswith("@"):
         return username[1:]
-    return username
+    return username.strip()
 
-def normaliser_nombre_followers(nombre_str: str) -> str | None:
-    if not isinstance(nombre_str, str):
+def normaliser_nombre_followers(nombre_str: Optional[str]) -> Optional[str]:
+    if not nombre_str or not isinstance(nombre_str, str):
         return None
+
     nombre_str_test = nombre_str.strip()
     if not re.match(r"^[\d.,\s]*[kKm]?$", nombre_str_test, re.IGNORECASE):
-        logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_test}' ne correspond pas au format attendu.")
+        logger.debug(
+            f"normaliser_nombre_followers: 	Ó{nombre_str_test}	 ne correspond pas au format attendu."
+        )
         return None
 
-    nombre_str_cleaned_spaces = nombre_str_test.replace(" ", "")
-    nombre_str_clean = nombre_str_cleaned_spaces.lower().replace(".", "").replace(",", "")
+    nombre_str_clean = nombre_str_test.lower()
     valeur = None
+
     try:
-        if "k" in nombre_str_clean:
-            nombre_str_clean = re.sub(r"(\d)\s+k", r"\1k", nombre_str_clean)
-            if not re.match(r"^\d+k$", nombre_str_clean):
-                logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour 	'{nombre_str_clean}'")
+        if "k" in nombre_str_clean or "m" in nombre_str_clean:
+            nombre_str_clean = nombre_str_clean.replace(" ", "")
+            nombre_part = nombre_str_clean[:-1].replace(",", ".")
+            multiplicateur = 1000 if "k" in nombre_str_clean else 1000000
+
+            if not re.match(r"^\d+(\.\d+)?[km]$", nombre_str_clean.replace(",", ".")):
+                logger.debug(
+                    f"normaliser_nombre_followers: Format 	Ók	 ou 	Óm	 invalide pour 	Ó{nombre_str_clean}	"
+                )
                 return None
-            valeur = str(int(float(nombre_str_clean.replace("k", "")) * 1000))
-        elif "m" in nombre_str_clean:
-            nombre_str_clean = re.sub(r"(\d)\s+m", r"\1m", nombre_str_clean)
-            if not re.match(r"^\d+m$", nombre_str_clean):
-                logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour 	'{nombre_str_clean}'")
-                return None
-            valeur = str(int(float(nombre_str_clean.replace("m", "")) * 1000000))
+            valeur = str(int(float(nombre_part) * multiplicateur))
         else:
+            nombre_str_clean = re.sub(r"\D", "", nombre_str_test)
             if not nombre_str_clean.isdigit():
-                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n_est pas un digit après nettoyage.")
+                logger.debug(
+                    f"normaliser_nombre_followers: 	Ó{nombre_str_clean}	 (après sub non-digit) n_est pas un digit."
+                )
                 return None
             valeur = str(int(nombre_str_clean))
     except ValueError:
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_clean}'")
+        logger.warning(
+            f"normaliser_nombre_followers: ValueError lors de la conversion de 	Ó{nombre_str_clean}	 (original: 	Ó{nombre_str_test}	)"
+        )
         return None
     return valeur
 
-def extraire_followers_spatial(texts, keywords, context_message=""):
-    """Extracts follower count based on keywords and proximity to numbers."""
-    relevant_annotations = []
-    for text in texts:
-        if any(keyword.lower() in text.description.lower() for keyword in keywords):
-            relevant_annotations.append(text)
+def fusionner_nombres_adjacents(
+    text_annotations: List[vision.entity_annotation.EntityAnnotation],
+    max_pixel_gap: int = 30, # Augmenté pour Instagram "2 570"
+    assistant_nom: str = "",
+) -> List[vision.entity_annotation.EntityAnnotation]:
+    if not text_annotations or len(text_annotations) == 0: # Changé de <=1 à ==0 car on passe sans le fulltext
+        return text_annotations
 
-    if not relevant_annotations:
-        logger.info(f"extraire_followers_spatial ({context_message}): No keywords found in OCR output.")
-        return None
+    logger.info(
+        f"fusionner_nombres_adjacents ({assistant_nom}): Début de la fusion. Nombre d_annotations: {len(text_annotations)}"
+    )
 
-    logger.info(f"extraire_followers_spatial ({context_message}): Found {len(relevant_annotations)} relevant annotations for keywords: {keywords}")
+    potential_number_annotations = []
+    for ann in text_annotations: # On ne skippe plus le premier ici
+        if re.search(r"\d", ann.description) and not re.fullmatch(
+            r"\d{1,2}:\d{2}", ann.description
+        ):
+            potential_number_annotations.append(ann)
 
-    combined_text = " ".join([ann.description for ann in relevant_annotations])
-    logger.info(f"extraire_followers_spatial ({context_message}): Combined text for number search: '{combined_text}'")
+    if not potential_number_annotations:
+        logger.info(
+            f"fusionner_nombres_adjacents ({assistant_nom}): Aucune annotation numérique potentielle trouvée pour la fusion."
+        )
+        # Retourner les annotations originales si aucune n_est numérique
+        return text_annotations 
 
-    numbers_found = re.findall(r'\d[\d,\s]*[kKmM]?', combined_text)
-    logger.info(f"extraire_followers_spatial ({context_message}): Numbers found in combined text: {numbers_found}")
+    potential_number_annotations.sort(
+        key=lambda ann: (
+            ann.bounding_poly.vertices[0].y + ann.bounding_poly.vertices[3].y
+        )
+        / 2
+    )
+    potential_number_annotations.sort(
+        key=lambda ann: (
+            ann.bounding_poly.vertices[0].x + ann.bounding_poly.vertices[1].x
+        )
+        / 2
+    )
 
-    if not numbers_found:
-        logger.info(f"extraire_followers_spatial ({context_message}): No numbers found near keywords.")
-        return None
+    merged_number_texts: List[vision.entity_annotation.EntityAnnotation] = []
+    processed_indices = [False] * len(potential_number_annotations)
 
-    for num_str in numbers_found:
-        normalized_num = normaliser_nombre_followers(num_str)
-        if normalized_num:
-            logger.info(f"extraire_followers_spatial ({context_message}): Found and normalized number: {normalized_num}")
-            return normalized_num
+    for i in range(len(potential_number_annotations)):
+        if processed_indices[i]:
+            continue
+
+        current_ann = potential_number_annotations[i]
+        current_desc = current_ann.description
+        current_vertices = list(current_ann.bounding_poly.vertices)
+        is_merged_block = False
+
+        for j in range(i + 1, len(potential_number_annotations)):
+            if processed_indices[j]:
+                continue
+
+            next_ann = potential_number_annotations[j]
+            current_mid_y = (current_vertices[0].y + current_vertices[3].y) / 2
+            next_mid_y = (
+                next_ann.bounding_poly.vertices[0].y
+                + next_ann.bounding_poly.vertices[3].y
+            ) / 2
+            current_right_x = max(v.x for v in current_vertices)
+            next_left_x = min(v.x for v in next_ann.bounding_poly.vertices)
+            approx_char_height = abs(current_vertices[3].y - current_vertices[0].y)
+            y_diff = abs(current_mid_y - next_mid_y)
+            gap_x = next_left_x - current_right_x
+
+            if (
+                y_diff < approx_char_height * 0.75
+                and 0 <= gap_x < max_pixel_gap
+                and re.search(r"\d", next_ann.description)
+            ):
+                logger.info(
+                    f"fusionner_nombres_adjacents ({assistant_nom}): Fusion de 	Ó{current_desc}	 avec 	Ó{next_ann.description}	 (gap_x: {gap_x:.0f}) "
+                )
+                current_desc += " " + next_ann.description
+                new_vertices = [
+                    vision.Vertex(
+                        x=min(
+                            current_vertices[0].x,
+                            next_ann.bounding_poly.vertices[0].x,
+                        ),
+                        y=min(
+                            current_vertices[0].y,
+                            next_ann.bounding_poly.vertices[0].y,
+                        ),
+                    ),
+                    vision.Vertex(
+                        x=max(
+                            current_vertices[1].x,
+                            next_ann.bounding_poly.vertices[1].x,
+                        ),
+                        y=min(
+                            current_vertices[1].y,
+                            next_ann.bounding_poly.vertices[1].y,
+                        ),
+                    ),
+                    vision.Vertex(
+                        x=max(
+                            current_vertices[2].x,
+                            next_ann.bounding_poly.vertices[2].x,
+                        ),
+                        y=max(
+                            current_vertices[2].y,
+                            next_ann.bounding_poly.vertices[2].y,
+                        ),
+                    ),
+                    vision.Vertex(
+                        x=min(
+                            current_vertices[3].x,
+                            next_ann.bounding_poly.vertices[3].x,
+                        ),
+                        y=max(
+                            current_vertices[3].y,
+                            next_ann.bounding_poly.vertices[3].y,
+                        ),
+                    ),
+                ]
+                current_vertices = new_vertices
+                processed_indices[j] = True
+                is_merged_block = True
+            else:
+                break
+
+        merged_ann = vision.EntityAnnotation(
+            description=current_desc,
+            bounding_poly=vision.BoundingPoly(vertices=current_vertices),
+        )
+        merged_number_texts.append(merged_ann)
+        processed_indices[i] = True
     
-    logger.info(f"extraire_followers_spatial ({context_message}): No valid number could be normalized from the found strings.")
-    return None
+    # Reconstruire la liste finale: non-nombres originaux + nombres fusionnés/isolés
+    final_annotations = []
+    original_non_numbers = [ann for ann in text_annotations if not re.search(r"\d", ann.description) or re.fullmatch(r"\d{1,2}:\d{2}", ann.description)]
+    final_annotations.extend(original_non_numbers)
+    final_annotations.extend(merged_number_texts)
+
+    logger.info(
+        f"fusionner_nombres_adjacents ({assistant_nom}): Fin de la fusion. Nombre d_annotations numériques traitées: {len(merged_number_texts)}. Total final: {len(final_annotations)}"
+    )
+    return final_annotations
+
+def extraire_followers_spatial(
+    text_annotations: List[vision.entity_annotation.EntityAnnotation],
+    mots_cles_followers: List[str],
+    reseau_nom: str = "inconnu",
+    assistant_nom: str = "",
+) -> Optional[str]:
+    try:
+        logger.info(
+            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): --- Début de l_extraction spatiale ---"
+        )
+
+        if not text_annotations or len(text_annotations) <= 1:
+            logger.warning(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Aucune annotation de texte (ou seulement le texte complet) fournie."
+            )
+            return None
+
+        # On passe les annotations SANS le premier élément (texte complet) à la fusion
+        annotations_details = text_annotations[1:]
+        annotations_post_fusion = fusionner_nombres_adjacents(
+            annotations_details, assistant_nom=assistant_nom
+        )
+
+        # La liste complète pour la recherche sera le texte complet + les annotations traitées (fusionnées et non-numériques)
+        processed_text_annotations = [text_annotations[0]] + annotations_post_fusion
+
+        logger.info(
+            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre total d_annotations pour analyse: {len(processed_text_annotations)}"
+        )
+        if len(processed_text_annotations) > 1:
+            logger.info(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Premières annotations après fusion (description et position Y moyenne):"
+            )
+            for i, annotation in enumerate(processed_text_annotations[1:11]):
+                try:
+                    if (
+                        hasattr(annotation, "description")
+                        and hasattr(annotation, "bounding_poly")
+                        and hasattr(annotation.bounding_poly, "vertices")
+                        and len(annotation.bounding_poly.vertices) >= 4
+                    ):
+                        vertices = annotation.bounding_poly.vertices
+                        avg_y_log = (
+                            vertices[0].y
+                            + vertices[1].y
+                            + vertices[2].y
+                            + vertices[3].y
+                        ) / 4
+                        logger.info(
+                            f"  - Ann {i+1} (post-fusion): 	Ó{annotation.description}	 (avg_y: {avg_y_log:.0f})"
+                        )
+                    else:
+                        logger.warning(
+                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Annotation post-fusion {i+1} malformée: {annotation}"
+                        )
+                except Exception as e_log_ann:
+                    logger.error(
+                        f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Erreur lors du logging de l_annotation post-fusion {i+1}: {e_log_ann}. Annotation: {annotation}"
+                    )
+
+        keyword_annotations_list = []
+        number_annotations_list = []
+
+        for i, annotation in enumerate(processed_text_annotations[1:]):
+            try:
+                if not hasattr(annotation, "description") or not hasattr(
+                    annotation, "bounding_poly"
+                ):
+                    continue
+
+                text = annotation.description.lower().strip()
+                if not hasattr(annotation.bounding_poly, "vertices") or len(
+                    annotation.bounding_poly.vertices
+                ) < 4:
+                    continue
+
+                vertices = annotation.bounding_poly.vertices
+                avg_y = (
+                    vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y
+                ) / 4
+                avg_x = (
+                    vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x
+                ) / 4
+
+                if any(keyword.lower() in text for keyword in mots_cles_followers):
+                    keyword_annotations_list.append(
+                        {"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation}
+                    )
+                    logger.info(
+                        f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): MOT-CLÉ TROUVÉ: 	Ó{text}	 à y={avg_y:.0f}, x={avg_x:.0f}"
+                    )
+
+                nombre_normalise_test = normaliser_nombre_followers(
+                    annotation.description
+                )
+                if nombre_normalise_test:
+                    if not re.fullmatch(r"\d{1,2}:\d{2}", annotation.description):
+                        number_annotations_list.append(
+                            {
+                                "text": annotation.description,
+                                "normalized": nombre_normalise_test,
+                                "avg_y": avg_y,
+                                "avg_x": avg_x,
+                                "annotation": annotation,
+                            }
+                        )
+                        logger.info(
+                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): NOMBRE POTENTIEL TROUVÉ: 	Ó{annotation.description}	 (normalisé: {nombre_normalise_test}) à y={avg_y:.0f}, x={avg_x:.0f}"
+                        )
+                    else:
+                        logger.info(
+                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre 	Ó{annotation.description}	 ignoré (format heure)."
+                        )
+
+            except Exception as e_loop_ann:
+                logger.error(
+                    f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): ERREUR INATTENDUE lors du traitement de l_annotation {i}: {e_loop_ann}"
+                )
+                logger.error(traceback.format_exc())
+                continue
+
+        logger.info(
+            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Fin de l_analyse des annotations. Mots-clés: {len(keyword_annotations_list)}, Nombres: {len(number_annotations_list)}"
+        )
+        for idx, na in enumerate(number_annotations_list):
+            logger.info(f"  - Nombre {idx}: {na["text"]} (normalisé: {na["normalized"]}) à y={na["avg_y"]:.0f}")
+
+        if not keyword_annotations_list:
+            logger.warning(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback."
+            )
+            if number_annotations_list:
+                number_annotations_list.sort(
+                    key=lambda x: int(x.get("normalized", "0")),
+                    reverse=True,
+                )
+                logger.info(
+                    f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback sans mot-clé): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}"
+                )
+                return number_annotations_list[0]["normalized"]
+            logger.warning(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Aucun mot-clé et aucun nombre trouvé. Abandon."
+            )
+            return None
+
+        best_candidate = None
+        min_distance = float("inf")
+
+        logger.info(
+            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé."
+        )
+        for kw_ann in keyword_annotations_list:
+            logger.info(f"  - Analyse pour mot-clé: 	Ó{kw_ann["text"]}	 à y={kw_ann["avg_y"]:.0f}")
+            for num_ann in number_annotations_list:
+                y_diff = num_ann["avg_y"] - kw_ann["avg_y"]
+                x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
+
+                if y_diff > -35 and y_diff < 100 and x_diff < 200:
+                    distance = (y_diff**2 + x_diff**2) ** 0.5
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_candidate = num_ann["normalized"]
+                        logger.info(
+                            f"      NOUVEAU MEILLEUR CANDIDAT (pour 	Ó{kw_ann["text"]}	): {best_candidate} (distance: {min_distance:.2f})"
+                        )
+
+        if best_candidate:
+            logger.info(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre de followers final extrait: {best_candidate}"
+            )
+            return best_candidate
+        else:
+            logger.warning(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale."
+            )
+            if number_annotations_list:
+                number_annotations_list.sort(
+                    key=lambda x: int(x.get("normalized", "0")),
+                    reverse=True,
+                )
+                if number_annotations_list and number_annotations_list[0]["normalized"]:
+                    logger.warning(
+                        f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}"
+                    )
+                    return number_annotations_list[0]["normalized"]
+            logger.warning(
+                f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback final): Aucun nombre à retourner."
+            )
+            return None
+
+    except Exception as e_global_spatial:
+        logger.error(
+            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}"
+        )
+        logger.error(traceback.format_exc())
+        return None
+
+def identifier_reseau_et_username(
+    text_annotations: List[vision.entity_annotation.EntityAnnotation],
+    assistant_nom: str = "",
+) -> Tuple[str, Optional[str]]:
+    if not text_annotations or not text_annotations[0].description:
+        logger.warning(
+            f"identifier_reseau_et_username ({assistant_nom}): Pas d_annotations ou de description complète."
+        )
+        return "inconnu", None
+
+    full_text = text_annotations[0].description.lower()
+    logger.info(
+        f"identifier_reseau_et_username ({assistant_nom}): Texte complet pour identification: \n{full_text[:500]}..."
+    )
+
+    reseau_scores = {name: 0 for name in RESEAUX_SOCIALS_KEYWORDS}
+    for name, keywords in RESEAUX_SOCIALS_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in full_text:
+                reseau_scores[name] += 1
+        if name in KNOWN_HANDLES:
+            for handle in KNOWN_HANDLES[name]:
+                if handle.lower() in full_text:
+                    reseau_scores[name] += 2
+
+    identified_reseau = max(reseau_scores, key=reseau_scores.get)
+    if reseau_scores[identified_reseau] == 0:
+        identified_reseau = "inconnu"
+    logger.info(
+        f"identifier_reseau_et_username ({assistant_nom}): Réseau identifié: {identified_reseau} (Scores: {reseau_scores})"
+    )
+
+    username = None
+    if identified_reseau != "inconnu" and identified_reseau in USERNAME_PATTERNS:
+        pattern = USERNAME_PATTERNS[identified_reseau]
+        matches = re.findall(pattern, text_annotations[0].description)
+        if matches:
+            potential_usernames = []
+            for match_group in matches:
+                m = (
+                    match_group
+                    if isinstance(match_group, str)
+                    else next((s for s in match_group if s), None)
+                )
+                if m and len(m) > 2 and not m.lower() in ["profil", "modifier", "accueil"]:
+                    potential_usernames.append(m)
+            if potential_usernames:
+                username = potential_usernames[0]
+                logger.info(
+                    f"identifier_reseau_et_username ({assistant_nom}): Username potentiel trouvé par regex: {username}"
+                )
+
+    if not username and identified_reseau != "inconnu":
+        for ann in text_annotations[1:]:
+            desc = ann.description
+            if desc.startswith("@") and len(desc) > 1:
+                username = desc
+                logger.info(
+                    f"identifier_reseau_et_username ({assistant_nom}): Username trouvé par fallback (@): {username}"
+                )
+                break
+            if identified_reseau in KNOWN_HANDLES:
+                closest_match = get_close_matches(
+                    desc, KNOWN_HANDLES[identified_reseau], n=1, cutoff=0.8
+                )
+                if closest_match:
+                    username = closest_match[0]
+                    logger.info(
+                        f"identifier_reseau_et_username ({assistant_nom}): Username trouvé par KNOWN_HANDLES: {username}"
+                    )
+                    break
+
+    if username:
+        username = corriger_username(username, identified_reseau)
+        logger.info(f"identifier_reseau_et_username ({assistant_nom}): Username final: {username}")
+    else:
+        logger.warning(f"identifier_reseau_et_username ({assistant_nom}): Aucun username n_a pu être extrait.")
+
+    return identified_reseau, username
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("--- Entrée dans handle_photo --- VÉRIFICATION APPEL --- ") # Log d'entrée
+    logger.info("--- Entrée dans handle_photo ---")
     assistant = "INCONNU"
     today = datetime.datetime.now().strftime("%d/%m/%Y")
-    message_status_general = None 
+    status_message = ""
     donnees_extraites_ok = False
-    action_tentee = False
-    message_thread_id_to_reply = None
+    reseau_identifie = "inconnu"
+    username_extrait = "Non trouvé"
+    abonnés_extraits = "Non trouvé"
+
+    message = update.message
+    if not message or not message.photo:
+        logger.info("handle_photo: Message None ou sans photo. Aucune action.")
+        return
+
+    # Détermination de l_assistant
+    # Méthode fiable: si l_image est une réponse au message de création du topic.
+    if (
+        message.reply_to_message
+        and hasattr(message.reply_to_message, "forum_topic_created")
+        and message.reply_to_message.forum_topic_created
+    ):
+        topic_name = message.reply_to_message.forum_topic_created.name
+        assistant = get_assistant_from_topic_name(topic_name)
+        logger.info(
+            f"handle_photo: Assistant 	Ó{assistant}	 identifié via réponse à la création du topic 	Ó{topic_name}	."
+        )
+    elif message.is_topic_message and message.message_thread_id:
+        # Image postée directement dans un topic. L_assistant ne peut pas être déterminé
+        # de manière fiable à partir du nom du topic sans un appel API supplémentaire ou une convention stricte.
+        # Le nom du topic n_est pas dans `message.chat.title` (c_est le nom du groupe).
+        assistant = f"INCONNU (TopicID: {message.message_thread_id})"
+        logger.warning(
+            f"handle_photo: Image postée directement dans le topic ID {message.message_thread_id}. "
+            f"L_assistant ne peut être déterminé automatiquement. Pour une identification, répondez au message de création du topic."
+        )
+        status_message += (
+            f"Impossible de déterminer l_assistant pour l_image postée directement dans le topic (ID: {message.message_thread_id}). "
+            f"Pour une identification correcte, veuillez répondre au message de création du sujet avec l_image.\n"
+        )
+    else:
+        logger.info(
+            f"handle_photo: Image non envoyée en réponse à la création d_un topic, ou pas dans un topic. Assistant reste 	Ó{assistant}	."
+        )
+        status_message += "L_image n_a pas été envoyée de manière à identifier l_assistant (répondre au message de création du topic). \n"
+
+    logger.info(f"handle_photo: Traitement pour l_assistant: {assistant}")
+
+    photo_file = None
+    try:
+        photo: PhotoSize = message.photo[-1]  # Prendre la plus grande résolution
+        photo_file = await photo.get_file()
+    except Exception as e:
+        logger.error(f"handle_photo ({assistant}): Erreur lors du téléchargement de la photo: {e}")
+        status_message += "Erreur lors du téléchargement de la photo depuis Telegram."
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=status_message,
+            message_thread_id=None,  # Envoyer à "General"
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    image_bytes = io.BytesIO()
+    await photo_file.download_to_memory(image_bytes)
+    image_bytes.seek(0)
 
     try:
-        message = update.message
-        if not message:
-            logger.warning("handle_photo: update.message est None. Aucune action.")
-            return
+        pil_image = Image.open(image_bytes)
+        pil_image = ImageOps.grayscale(pil_image)
+        # Améliorations optionnelles (à tester):
+        # pil_image = pil_image.resize((pil_image.width * 2, pil_image.height * 2), Image.Resampling.LANCZOS)
+        # pil_image = ImageEnhance.Contrast(pil_image).enhance(1.5)
         
-        message_thread_id_to_reply = message.message_thread_id # Sauvegarder pour le finally
+        img_byte_arr = io.BytesIO()
+        pil_image.save(img_byte_arr, format="PNG")
+        content = img_byte_arr.getvalue()
+        vision_image = vision.Image(content=content)
 
-        if not message.photo:
-            logger.info("handle_photo: Message ne contient pas de photo. Aucune action.")
-            # Pas de message d'erreur à l'utilisateur ici, car ce handler ne devrait être appelé que pour les photos.
-            return
-
-        reply = message.reply_to_message
-        if not reply or not hasattr(reply, 'forum_topic_created') or not reply.forum_topic_created:
-            logger.warning("handle_photo: Le message n'est pas une réponse à un message de création de sujet de forum.")
-            message_status_general = "⚠️ L'image doit être envoyée en réponse au message de création du sujet du forum pour être traitée."
-            # Le finally enverra ce message
-            return # Arrêter le traitement ici
-        
-        topic_name_for_error_handling = reply.forum_topic_created.name
-        assistant = topic_name_for_error_handling
-        logger.info(f"handle_photo: Traitement pour l'assistant: {assistant}")
-
-        file_id = message.photo[-1].file_id
-        if file_id in already_processed:
-            logger.info(f"handle_photo: Image {file_id} déjà traitée. Ignorée.")
-            return
-        already_processed.add(file_id)
-
-        new_file = await ptb_application.bot.get_file(file_id)
-        img_bytes = await new_file.download_as_bytearray()
-        
-        image_pil = Image.open(io.BytesIO(img_bytes))
-        width, height = image_pil.size
-        
-        crop_height_ratio = 0.4 
-        temp_reseau_detect = "instagram"
-        if assistant:
-            assistant_lower = assistant.lower()
-            if "twitter" in assistant_lower or " x " in assistant_lower:
-                temp_reseau_detect = "twitter"
-            elif "tiktok" in assistant_lower:
-                temp_reseau_detect = "tiktok"
-
-        if temp_reseau_detect == "twitter":
-            crop_height_ratio = 0.65
-            logger.info(f"handle_photo: Ratio de crop ajusté à {crop_height_ratio} pour Twitter (détecté via nom assistant).")
-        
-        cropped_image = image_pil.crop((0, 0, width, int(height * crop_height_ratio)))
-        byte_arr = io.BytesIO()
-        cropped_image.save(byte_arr, format='PNG')
-        content_vision = byte_arr.getvalue()
+        # Recadrage pour Twitter (si identifié, sinon OCR sur image complète)
+        # Pour l_instant, on fait l_OCR sur l_image complète puis on identifie le réseau.
+        # Si c_est Twitter, on pourrait refaire un OCR ciblé si nécessaire.
 
         if not vision_client:
-            logger.error("handle_photo: Client Google Vision AI non initialisé. Impossible de traiter l'image.")
-            message_status_general = f"Erreur interne: Client Vision AI non disponible pour {assistant}."
-            raise Exception("Client Vision AI non initialisé")
-            
-        image_for_vision = vision.Image(content=content_vision)
-        response = vision_client.document_text_detection(image=image_for_vision)
-        texts_annotations_vision = response.text_annotations
+            raise Exception("Client Vision AI non initialisé.")
+        
+        response = vision_client.text_detection(image=vision_image)
+        texts = response.text_annotations
 
         if response.error.message:
-            logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
-            message_status_general = f"Erreur OCR Google Vision pour {assistant}: {response.error.message}"
-        elif not texts_annotations_vision or not texts_annotations_vision[0].description:
-            logger.warning(f"handle_photo: OCR n'a retourné aucun texte pour {assistant}.")
-            message_status_general = f"L_OCR n'a retourné aucun texte pour l'image de {assistant}."
-        else:
-            ocr_text_full = texts_annotations_vision[0].description
-            logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
+            raise Exception(f"Erreur de l_API Vision: {response.error.message}")
 
-            ocr_lower = ocr_text_full.lower()
-            if "tiktok" in ocr_lower or "j_aime" in ocr_lower or "j’aime" in ocr_lower:
-                reseau = "tiktok"
-            elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnements" in ocr_lower or "abonnés" in ocr_lower:
-                reseau = "twitter"
-            elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
-                reseau = "instagram"
-            elif "threads" in ocr_lower:
-                reseau = "threads"
-            elif "beacons.ai" in ocr_lower:
-                if "twitter" in ocr_lower:
-                    reseau = "twitter"
-                else:
-                    reseau = "instagram"
-            else: 
-                reseau = temp_reseau_detect
-                logger.info(f"Réseau non clairement identifié par OCR, déduit de/mis par défaut à: {reseau}")
-            logger.info(f"handle_photo: Réseau identifié pour {assistant}: {reseau}")
+        if texts:
+            logger.info(f"handle_photo ({assistant}): Texte extrait par OCR (début): {texts[0].description[:200].replace("\n", " ")}")
+            reseau_identifie, username_extrait = identifier_reseau_et_username(
+                texts, assistant_nom=assistant
+            )
+            logger.info(
+                f"handle_photo ({assistant}): Réseau identifié: {reseau_identifie}, Username: {username_extrait}"
+            )
 
-            usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
-            reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-            username = "Non trouvé"
-            cleaned_usernames = [re.sub(r"[^a-zA-Z0-9_.-]", "", u).lower() for u in usernames_found]
-            for u_cleaned in cleaned_usernames:
-                if u_cleaned in [h.lower() for h in reseau_handles]:
-                    username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
-                    if username != "Non trouvé": break
-            if username == "Non trouvé":
-                for u in usernames_found:
-                    matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
-                    if matches: username = matches[0]; break
-            if username == "Non trouvé" and usernames_found: username = usernames_found[0]
-            urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text_full, re.IGNORECASE)
-            if username == "Non trouvé" and urls:
-                for _, u_from_url in urls:
-                    match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
-                    if match_url: username = match_url[0]; break
-                    if username == "Non trouvé": username = u_from_url 
-            username = corriger_username(username, reseau)
-            logger.info(f"🕵️ Username final pour {assistant}: 	'{username}' (réseau : {reseau})")
+            mots_cles_fol = FOLLOWERS_KEYWORDS_SPECIFIC.get(reseau_identifie, [])
+            if not mots_cles_fol and reseau_identifie != "inconnu": # Fallback générique si pas de mots clés spécifiques
+                mots_cles_fol = ["followers", "abonnés", "suivi(e)s"]
+            
+            abonnés_extraits = extraire_followers_spatial(
+                texts, mots_cles_fol, reseau_identifie, assistant_nom=assistant
+            )
+            logger.info(f"handle_photo ({assistant}): Followers extraits: {abonnés_extraits}")
 
-            abonnés = None
-            if reseau == "tiktok":
-                mots_cles_tiktok = ["followers", "abonnés", "abonné", "fans", "abos"]
-                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, f"tiktok ({assistant})")
-            elif reseau == "instagram":
-                mots_cles_instagram = ["followers", "abonnés", "abonné", "suivi(e)s", "suivis"]
-                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, f"instagram ({assistant})")
-            elif reseau == "twitter":
-                mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"]
-                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, f"twitter ({assistant})")
-            elif reseau == "threads":
-                 mots_cles_threads = ["followers", "abonnés", "abonné"]
-                 abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, f"threads ({assistant})")
-            else:
-                mots_cles_generiques = ["followers", "abonnés", "abonné", "fans", "suivi(e)s", "suivis"]
-                abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau}, {assistant})")
-
-            logger.info(f"handle_photo: Abonnés extraits pour {assistant} ({reseau}): {abonnés}")
-
-            if username != "Non trouvé" and abonnés is not None:
+            if reseau_identifie != "inconnu" and username_extrait and abonnés_extraits:
                 donnees_extraites_ok = True
-                action_tentee = True
-                try:
-                    if sheet: 
-                        sheet.append_row([today, assistant, reseau, username, abonnés, ""])
-                        logger.info(f"Données ajoutées à Google Sheets pour {assistant}: {today}, {reseau}, {username}, {abonnés}")
-                        message_status_general = f"OK ✅ {username} ({reseau}) -> {abonnés} followers."
-                    else:
-                        logger.warning(f"Google Sheets non disponible. Données non enregistrées pour {assistant}.")
-                        message_status_general = f"OK (Sheets OFF) ✅ {username} ({reseau}) -> {abonnés} followers."
-                except Exception as e_gsheet:
-                    logger.error(f"Erreur lors de l'écriture sur Google Sheets pour {assistant}: {e_gsheet}")
-                    logger.error(traceback.format_exc())
-                    message_status_general = f"⚠️ Erreur Sheets pour {assistant} ({username}, {reseau}, {abonnés}). Détails dans les logs."
+                status_message += (
+                    f"<b>Assistant {assistant}</b>:\n"
+                    f"Réseau: {reseau_identifie}\n"
+                    f"Username: {username_extrait}\n"
+                    f"Abonnés: {abonnés_extraits}"
+                )
+                if sheet:
+                    try:
+                        sheet.append_row([
+                            today,
+                            assistant,
+                            reseau_identifie,
+                            username_extrait,
+                            abonnés_extraits,
+                        ])
+                        logger.info(f"Données ajoutées à Google Sheets pour {assistant}")
+                    except Exception as e_gsheet:
+                        logger.error(f"Erreur lors de l_ajout à Google Sheets: {e_gsheet}")
+                        status_message += "\n(Erreur sauvegarde GSheets)"
+                else:
+                    logger.error("Google Sheet non initialisé, sauvegarde impossible.")
+                    status_message += "\n(Sauvegarde GSheets impossible: non initialisé)"
             else:
-                action_tentee = True
-                logger.warning(f"handle_photo: Données incomplètes pour {assistant}. Username: {username}, Abonnés: {abonnés}")
-                message_status_general = f"❓ Données incomplètes pour {assistant}. Username: 	'{username}'	, Abonnés: 	'{abonnés}'	. Réseau: {reseau}. OCR brut: {ocr_text_full[:150]}..."
+                status_message += (
+                    f"<b>Assistant {assistant}</b>:\n"
+                    f"Traitement OCR terminé, mais informations incomplètes.\n"
+                    f"Réseau: {reseau_identifie if reseau_identifie != \"inconnu\" else \"Non identifié\"}\n"
+                    f"Username: {username_extrait if username_extrait else \"Non trouvé\"}\n"
+                    f"Abonnés: {abonnés_extraits if abonnés_extraits else \"Non trouvé\"}"
+                )
+        else:
+            logger.warning(f"handle_photo ({assistant}): Aucun texte détecté par l_OCR.")
+            status_message += f"<b>Assistant {assistant}</b>: Aucun texte n_a pu être détecté sur l_image."
 
+    except UnidentifiedImageError:
+        logger.error(f"handle_photo ({assistant}): Format d_image non reconnu ou image corrompue.")
+        status_message += f"<b>Assistant {assistant}</b>: Le format de l_image n_est pas reconnu ou l_image est corrompue."
     except Exception as e:
-        logger.error(f"❌ Erreur globale dans handle_photo pour l'assistant {assistant}:")
+        logger.error(f"handle_photo ({assistant}): Erreur lors du traitement OCR ou de l_analyse: {e}")
         logger.error(traceback.format_exc())
-        message_status_general = f"🆘 Erreur critique bot pour {assistant}. Détails dans les logs."
-    
-    finally:
-        if message_status_general and GROUP_ID and message_thread_id_to_reply:
-            try:
-                await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=message_thread_id_to_reply)
-                logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
-            except Exception as e_send_status:
-                logger.error(f"Erreur lors de l'envoi du message de statut au groupe pour {assistant}: {e_send_status}")
-                logger.error(traceback.format_exc())
-        elif not message_status_general and action_tentee:
-            logger.warning(f"handle_photo: Un message de statut aurait dû être généré pour {assistant} mais ne l'a pas été.")
-        # Ne pas logger si aucune action n'a été tentée et qu'il n'y a pas de message, car cela peut être normal (ex: image déjà traitée)
+        status_message += f"<b>Assistant {assistant}</b>: Une erreur est survenue lors de l_analyse de l_image: {str(e)[:100]}"
 
-ptb_application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-@app.on_event("startup")
-async def startup_event():
+    # Envoi du message de statut dans le topic "General"
     try:
-        await ptb_application.initialize()
-        base_url = RAILWAY_PUBLIC_URL.rstrip("/")
-        webhook_url = f"{base_url}/"
-        await ptb_application.bot.set_webhook(url=webhook_url, allowed_updates=["message"])
-        logger.info(f"Webhook configuré sur: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Erreur lors de la configuration du webhook: {e}")
-        logger.error(traceback.format_exc())
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=status_message if status_message else f"<b>Assistant {assistant}</b>: Traitement terminé (pas de message spécifique).",
+            message_thread_id=None,  # None pour envoyer au topic "General"
+            parse_mode=ParseMode.HTML,
+        )
+        logger.info(f"Message de statut envoyé à General pour l_assistant {assistant}.")
+    except Exception as e_send:
+        logger.error(f"Erreur lors de l_envoi du message de statut à General: {e_send}")
 
-@app.post("/") 
-async def webhook_handler_post(request: Request):
-    logger.info("--- Entrée dans webhook_handler_post ---") # Log d'entrée
+async def webhook_handler_post(request: fastapi.Request, ptb_context: ContextTypes.DEFAULT_TYPE):
+    logger.info("--- Entrée dans webhook_handler_post ---")
     try:
-        data = await request.json()
-        logger.info(f"webhook_handler_post: Données JSON reçues: {json.dumps(data, indent=2)}") # Log des données JSON
-        update = Update.de_json(data, ptb_application.bot)
-        logger.info("webhook_handler_post: Objet Update créé avec succès.")
+        update_data = await request.json()
+        logger.debug(f"Webhook received data: {json.dumps(update_data, indent=2)}")
+        update = Update.de_json(data=update_data, bot=ptb_context.bot)
         await ptb_application.process_update(update)
-        logger.info("webhook_handler_post: ptb_application.process_update(update) terminé.")
-        return {"status": "ok"}
+        return fastapi.Response(content="OK", status_code=200)
     except json.JSONDecodeError:
         logger.error("webhook_handler_post: Erreur de décodage JSON.")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        return fastapi.Response(content="Error: Invalid JSON", status_code=400)
     except Exception as e:
-        logger.error(f"webhook_handler_post: Erreur lors du traitement de la mise à jour: {e}")
+        logger.error(f"webhook_handler_post: Erreur lors du traitement de l_update: {e}")
         logger.error(traceback.format_exc())
-        return {"status": "error processing update"} 
+        return fastapi.Response(content="Error: Internal Server Error", status_code=500)
+
+async def startup_event():
+    logger.info("Application startup...")
+    if not vision_client or not gc or not sheet or not TOKEN:
+        logger.critical("Dépendances critiques non initialisées. Arrêt.")
+        # Dans un vrai scénario, cela pourrait déclencher une alerte ou un arrêt propre.
+        return
+
+    await ptb_application.initialize() # Nécessaire pour l_utilisation avec FastAPI
+
+    if not MODE_POLLING:
+        if not RAILWAY_PUBLIC_URL:
+            logger.error(
+                "MODE_POLLING est false mais RAILWAY_PUBLIC_URL n_est pas définie. Webhook non configuré."
+            )
+            return
+        webhook_url = f"{RAILWAY_PUBLIC_URL.rstrip("/")}/"
+        try:
+            await ptb_application.bot.set_webhook(
+                url=webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+            )
+            logger.info(f"Webhook configuré sur: {webhook_url}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la configuration du webhook: {e}")
+            logger.error(traceback.format_exc())
+    else:
+        logger.info("Mode Polling activé. Le Webhook n_est pas configuré.")
+        # Lancer le polling dans une tâche séparée pour ne pas bloquer Uvicorn (si Uvicorn est quand même lancé)
+        # Cependant, si MODE_POLLING est true, on ne devrait pas lancer FastAPI/Uvicorn via le Procfile.
+        # Cette partie est plus pour un fonctionnement hybride ou un test local.
+        # asyncio.create_task(ptb_application.run_polling(drop_pending_updates=True))
+
+async def shutdown_event():
+    logger.info("Application shutdown...")
+    if not MODE_POLLING:
+        try:
+            await ptb_application.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Webhook supprimé.")
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression du webhook: {e}")
+    await ptb_application.shutdown()
+
+def main_bot():
+    # Ajout du handler pour les photos
+    ptb_application.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.ChatType.SUPERGROUP, handle_photo
+        ) # Uniquement dans les supergroupes
+    )
+
+    # Ajout d_un TypeHandler pour intercepter toutes les updates et les passer à FastAPI
+    # Ceci est nécessaire pour que le webhook_handler_post puisse utiliser ptb_application.process_update
+    # et que les handlers de PTB soient exécutés.
+    # Le contexte doit être passé correctement.
+    # On crée un contexte "bidon" ici car on ne sait pas comment FastAPI va le fournir.
+    # La meilleure approche est de laisser FastAPI gérer la requête et passer les données à PTB.
+
+    # Le webhook_handler_post s_occupe maintenant de ptb_application.process_update
+    # donc pas besoin de TypeHandler ici si on est en mode webhook.
+
+    if MODE_POLLING:
+        logger.info("Démarrage du bot en mode polling...")
+        ptb_application.run_polling(drop_pending_updates=True)
+    else:
+        logger.info(
+            "Mode Webhook configuré (nécessite un serveur d_application externe comme FastAPI/Uvicorn)."
+        )
+        logger.info("Ce script ne démarrera pas de serveur webhook lui-même.")
+        logger.info(
+            "Assurez-vous que votre infrastructure (ex: Railway) lance ce bot via une app ASGI (comme avec uvicorn main:app)."
+        )
+        # Configuration de FastAPI
+        fastapi_app.add_event_handler("startup", startup_event)
+        fastapi_app.add_event_handler("shutdown", shutdown_event)
+
+        # Passer le contexte PTB au handler FastAPI. Ceci est délicat.
+        # Une approche est d_utiliser une dépendance FastAPI pour créer/fournir le contexte.
+        # Pour simplifier, on va supposer que le contexte est disponible globalement ou via ptb_application.
+        # On passe ptb_application.bot. CallbackContext n_est pas directement utilisable ici.
+        # On va utiliser le ptb_application directement dans le handler.
+
+        @fastapi_app.post("/")
+        async def webhook_route(request: fastapi.Request):
+            return await webhook_handler_post(request, ptb_application) # Passer ptb_application comme contexte simplifié
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    main_bot()
+    if not MODE_POLLING:
+        # Lancer Uvicorn seulement si on n_est pas en mode polling et si ce script est exécuté directement
+        # (ce qui ne sera pas le cas sur Railway si le Procfile utilise `uvicorn main:fastapi_app`)
+        # Cette section est plus pour le test local.
+        port = int(os.getenv("PORT", "8000"))
+        logger.info(f"Démarrage du serveur Uvicorn sur le port {port} pour le mode webhook (test local)...")
+        uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
 
