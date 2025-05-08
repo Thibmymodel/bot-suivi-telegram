@@ -197,6 +197,7 @@ def normaliser_nombre_followers(nombre_str: Optional[str]) -> Optional[str]:
 
     nombre_str_test = nombre_str.strip()
     if not re.match(r"^[\d.,\s]*[kKm]?$", nombre_str_test, re.IGNORECASE):
+        # Utilisation de guillemets simples pour la chaîne dans la f-string
         logger.debug(
             f"normaliser_nombre_followers: 	Ó{nombre_str_test}	 ne correspond pas au format attendu."
         )
@@ -237,7 +238,7 @@ def fusionner_nombres_adjacents(
     max_pixel_gap: int = 30, # Augmenté pour Instagram "2 570"
     assistant_nom: str = "",
 ) -> List[vision.entity_annotation.EntityAnnotation]:
-    if not text_annotations or len(text_annotations) == 0: # Changé de <=1 à ==0 car on passe sans le fulltext
+    if not text_annotations or len(text_annotations) == 0: 
         return text_annotations
 
     logger.info(
@@ -245,7 +246,7 @@ def fusionner_nombres_adjacents(
     )
 
     potential_number_annotations = []
-    for ann in text_annotations: # On ne skippe plus le premier ici
+    for ann in text_annotations: 
         if re.search(r"\d", ann.description) and not re.fullmatch(
             r"\d{1,2}:\d{2}", ann.description
         ):
@@ -255,7 +256,6 @@ def fusionner_nombres_adjacents(
         logger.info(
             f"fusionner_nombres_adjacents ({assistant_nom}): Aucune annotation numérique potentielle trouvée pour la fusion."
         )
-        # Retourner les annotations originales si aucune n_est numérique
         return text_annotations 
 
     potential_number_annotations.sort(
@@ -281,7 +281,6 @@ def fusionner_nombres_adjacents(
         current_ann = potential_number_annotations[i]
         current_desc = current_ann.description
         current_vertices = list(current_ann.bounding_poly.vertices)
-        is_merged_block = False
 
         for j in range(i + 1, len(potential_number_annotations)):
             if processed_indices[j]:
@@ -304,8 +303,11 @@ def fusionner_nombres_adjacents(
                 and 0 <= gap_x < max_pixel_gap
                 and re.search(r"\d", next_ann.description)
             ):
+                # Correction f-string
+                log_current_desc = current_desc
+                log_next_ann_desc = next_ann.description
                 logger.info(
-                    f"fusionner_nombres_adjacents ({assistant_nom}): Fusion de 	Ó{current_desc}	 avec 	Ó{next_ann.description}	 (gap_x: {gap_x:.0f}) "
+                    f"fusionner_nombres_adjacents ({assistant_nom}): Fusion de 	Ó{log_current_desc}	 avec 	Ó{log_next_ann_desc}	 (gap_x: {gap_x:.0f}) "
                 )
                 current_desc += " " + next_ann.description
                 new_vertices = [
@@ -352,7 +354,6 @@ def fusionner_nombres_adjacents(
                 ]
                 current_vertices = new_vertices
                 processed_indices[j] = True
-                is_merged_block = True
             else:
                 break
 
@@ -363,7 +364,6 @@ def fusionner_nombres_adjacents(
         merged_number_texts.append(merged_ann)
         processed_indices[i] = True
     
-    # Reconstruire la liste finale: non-nombres originaux + nombres fusionnés/isolés
     final_annotations = []
     original_non_numbers = [ann for ann in text_annotations if not re.search(r"\d", ann.description) or re.fullmatch(r"\d{1,2}:\d{2}", ann.description)]
     final_annotations.extend(original_non_numbers)
@@ -391,13 +391,11 @@ def extraire_followers_spatial(
             )
             return None
 
-        # On passe les annotations SANS le premier élément (texte complet) à la fusion
         annotations_details = text_annotations[1:]
         annotations_post_fusion = fusionner_nombres_adjacents(
             annotations_details, assistant_nom=assistant_nom
         )
 
-        # La liste complète pour la recherche sera le texte complet + les annotations traitées (fusionnées et non-numériques)
         processed_text_annotations = [text_annotations[0]] + annotations_post_fusion
 
         logger.info(
@@ -422,8 +420,10 @@ def extraire_followers_spatial(
                             + vertices[2].y
                             + vertices[3].y
                         ) / 4
+                        # Correction f-string
+                        ann_desc = annotation.description
                         logger.info(
-                            f"  - Ann {i+1} (post-fusion): 	Ó{annotation.description}	 (avg_y: {avg_y_log:.0f})"
+                            f"  - Ann {i+1} (post-fusion): 	Ó{ann_desc}	 (avg_y: {avg_y_log:.0f})"
                         )
                     else:
                         logger.warning(
@@ -480,12 +480,16 @@ def extraire_followers_spatial(
                                 "annotation": annotation,
                             }
                         )
+                        # Correction f-string
+                        ann_desc_norm = annotation.description
                         logger.info(
-                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): NOMBRE POTENTIEL TROUVÉ: 	Ó{annotation.description}	 (normalisé: {nombre_normalise_test}) à y={avg_y:.0f}, x={avg_x:.0f}"
+                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): NOMBRE POTENTIEL TROUVÉ: 	Ó{ann_desc_norm}	 (normalisé: {nombre_normalise_test}) à y={avg_y:.0f}, x={avg_x:.0f}"
                         )
                     else:
+                        # Correction f-string
+                        ann_desc_heure = annotation.description
                         logger.info(
-                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre 	Ó{annotation.description}	 ignoré (format heure)."
+                            f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre 	Ó{ann_desc_heure}	 ignoré (format heure)."
                         )
 
             except Exception as e_loop_ann:
@@ -499,7 +503,11 @@ def extraire_followers_spatial(
             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Fin de l_analyse des annotations. Mots-clés: {len(keyword_annotations_list)}, Nombres: {len(number_annotations_list)}"
         )
         for idx, na in enumerate(number_annotations_list):
-            logger.info(f"  - Nombre {idx}: {na["text"]} (normalisé: {na["normalized"]}) à y={na["avg_y"]:.0f}")
+            # Correction f-string pour les accès au dictionnaire 'na'
+            na_text = na["text"]
+            na_normalized = na["normalized"]
+            na_avg_y = na["avg_y"]
+            logger.info(f"  - Nombre {idx}: {na_text} (normalisé: {na_normalized}) à y={na_avg_y:.0f}")
 
         if not keyword_annotations_list:
             logger.warning(
@@ -510,8 +518,10 @@ def extraire_followers_spatial(
                     key=lambda x: int(x.get("normalized", "0")),
                     reverse=True,
                 )
+                # Correction f-string
+                sel_num_norm = number_annotations_list[0]["normalized"]
                 logger.info(
-                    f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback sans mot-clé): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}"
+                    f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback sans mot-clé): Sélection du plus grand nombre: {sel_num_norm}"
                 )
                 return number_annotations_list[0]["normalized"]
             logger.warning(
@@ -526,7 +536,10 @@ def extraire_followers_spatial(
             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé."
         )
         for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Analyse pour mot-clé: 	Ó{kw_ann["text"]}	 à y={kw_ann["avg_y"]:.0f}")
+            # Correction f-string
+            kw_text = kw_ann["text"]
+            kw_avg_y = kw_ann["avg_y"]
+            logger.info(f"  - Analyse pour mot-clé: 	Ó{kw_text}	 à y={kw_avg_y:.0f}")
             for num_ann in number_annotations_list:
                 y_diff = num_ann["avg_y"] - kw_ann["avg_y"]
                 x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
@@ -536,8 +549,10 @@ def extraire_followers_spatial(
                     if distance < min_distance:
                         min_distance = distance
                         best_candidate = num_ann["normalized"]
+                        # Correction f-string
+                        kw_text_cand = kw_ann["text"]
                         logger.info(
-                            f"      NOUVEAU MEILLEUR CANDIDAT (pour 	Ó{kw_ann["text"]}	): {best_candidate} (distance: {min_distance:.2f})"
+                            f"      NOUVEAU MEILLEUR CANDIDAT (pour 	Ó{kw_text_cand}	): {best_candidate} (distance: {min_distance:.2f})"
                         )
 
         if best_candidate:
@@ -555,8 +570,10 @@ def extraire_followers_spatial(
                     reverse=True,
                 )
                 if number_annotations_list and number_annotations_list[0]["normalized"]:
+                    # Correction f-string
+                    sel_num_norm_fin = number_annotations_list[0]["normalized"]
                     logger.warning(
-                        f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}"
+                        f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback final): Sélection du plus grand nombre: {sel_num_norm_fin}"
                     )
                     return number_annotations_list[0]["normalized"]
             logger.warning(
@@ -666,8 +683,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("handle_photo: Message None ou sans photo. Aucune action.")
         return
 
-    # Détermination de l_assistant
-    # Méthode fiable: si l_image est une réponse au message de création du topic.
     if (
         message.reply_to_message
         and hasattr(message.reply_to_message, "forum_topic_created")
@@ -679,9 +694,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"handle_photo: Assistant 	Ó{assistant}	 identifié via réponse à la création du topic 	Ó{topic_name}	."
         )
     elif message.is_topic_message and message.message_thread_id:
-        # Image postée directement dans un topic. L_assistant ne peut pas être déterminé
-        # de manière fiable à partir du nom du topic sans un appel API supplémentaire ou une convention stricte.
-        # Le nom du topic n_est pas dans `message.chat.title` (c_est le nom du groupe).
         assistant = f"INCONNU (TopicID: {message.message_thread_id})"
         logger.warning(
             f"handle_photo: Image postée directement dans le topic ID {message.message_thread_id}. "
@@ -701,7 +713,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     photo_file = None
     try:
-        photo: PhotoSize = message.photo[-1]  # Prendre la plus grande résolution
+        photo: PhotoSize = message.photo[-1]  
         photo_file = await photo.get_file()
     except Exception as e:
         logger.error(f"handle_photo ({assistant}): Erreur lors du téléchargement de la photo: {e}")
@@ -709,7 +721,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=GROUP_ID,
             text=status_message,
-            message_thread_id=None,  # Envoyer à "General"
+            message_thread_id=None,  
             parse_mode=ParseMode.HTML,
         )
         return
@@ -721,18 +733,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         pil_image = Image.open(image_bytes)
         pil_image = ImageOps.grayscale(pil_image)
-        # Améliorations optionnelles (à tester):
-        # pil_image = pil_image.resize((pil_image.width * 2, pil_image.height * 2), Image.Resampling.LANCZOS)
-        # pil_image = ImageEnhance.Contrast(pil_image).enhance(1.5)
         
         img_byte_arr = io.BytesIO()
         pil_image.save(img_byte_arr, format="PNG")
         content = img_byte_arr.getvalue()
         vision_image = vision.Image(content=content)
-
-        # Recadrage pour Twitter (si identifié, sinon OCR sur image complète)
-        # Pour l_instant, on fait l_OCR sur l_image complète puis on identifie le réseau.
-        # Si c_est Twitter, on pourrait refaire un OCR ciblé si nécessaire.
 
         if not vision_client:
             raise Exception("Client Vision AI non initialisé.")
@@ -753,7 +758,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             mots_cles_fol = FOLLOWERS_KEYWORDS_SPECIFIC.get(reseau_identifie, [])
-            if not mots_cles_fol and reseau_identifie != "inconnu": # Fallback générique si pas de mots clés spécifiques
+            if not mots_cles_fol and reseau_identifie != "inconnu": 
                 mots_cles_fol = ["followers", "abonnés", "suivi(e)s"]
             
             abonnés_extraits = extraire_followers_spatial(
@@ -789,9 +794,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_message += (
                     f"<b>Assistant {assistant}</b>:\n"
                     f"Traitement OCR terminé, mais informations incomplètes.\n"
-                    f"Réseau: {reseau_identifie if reseau_identifie != \"inconnu\" else \"Non identifié\"}\n"
-                    f"Username: {username_extrait if username_extrait else \"Non trouvé\"}\n"
-                    f"Abonnés: {abonnés_extraits if abonnés_extraits else \"Non trouvé\"}"
+                    # Correction f-string
+                    f"Réseau: {reseau_identifie if reseau_identifie != 'inconnu' else 'Non identifié'}\n"
+                    f"Username: {username_extrait if username_extrait else 'Non trouvé'}\n"
+                    f"Abonnés: {abonnés_extraits if abonnés_extraits else 'Non trouvé'}"
                 )
         else:
             logger.warning(f"handle_photo ({assistant}): Aucun texte détecté par l_OCR.")
@@ -805,12 +811,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(traceback.format_exc())
         status_message += f"<b>Assistant {assistant}</b>: Une erreur est survenue lors de l_analyse de l_image: {str(e)[:100]}"
 
-    # Envoi du message de statut dans le topic "General"
     try:
         await context.bot.send_message(
             chat_id=GROUP_ID,
             text=status_message if status_message else f"<b>Assistant {assistant}</b>: Traitement terminé (pas de message spécifique).",
-            message_thread_id=None,  # None pour envoyer au topic "General"
+            message_thread_id=None,  
             parse_mode=ParseMode.HTML,
         )
         logger.info(f"Message de statut envoyé à General pour l_assistant {assistant}.")
@@ -837,10 +842,9 @@ async def startup_event():
     logger.info("Application startup...")
     if not vision_client or not gc or not sheet or not TOKEN:
         logger.critical("Dépendances critiques non initialisées. Arrêt.")
-        # Dans un vrai scénario, cela pourrait déclencher une alerte ou un arrêt propre.
         return
 
-    await ptb_application.initialize() # Nécessaire pour l_utilisation avec FastAPI
+    await ptb_application.initialize() 
 
     if not MODE_POLLING:
         if not RAILWAY_PUBLIC_URL:
@@ -861,10 +865,6 @@ async def startup_event():
             logger.error(traceback.format_exc())
     else:
         logger.info("Mode Polling activé. Le Webhook n_est pas configuré.")
-        # Lancer le polling dans une tâche séparée pour ne pas bloquer Uvicorn (si Uvicorn est quand même lancé)
-        # Cependant, si MODE_POLLING est true, on ne devrait pas lancer FastAPI/Uvicorn via le Procfile.
-        # Cette partie est plus pour un fonctionnement hybride ou un test local.
-        # asyncio.create_task(ptb_application.run_polling(drop_pending_updates=True))
 
 async def shutdown_event():
     logger.info("Application shutdown...")
@@ -877,22 +877,11 @@ async def shutdown_event():
     await ptb_application.shutdown()
 
 def main_bot():
-    # Ajout du handler pour les photos
     ptb_application.add_handler(
         MessageHandler(
             filters.PHOTO & filters.ChatType.SUPERGROUP, handle_photo
-        ) # Uniquement dans les supergroupes
+        ) 
     )
-
-    # Ajout d_un TypeHandler pour intercepter toutes les updates et les passer à FastAPI
-    # Ceci est nécessaire pour que le webhook_handler_post puisse utiliser ptb_application.process_update
-    # et que les handlers de PTB soient exécutés.
-    # Le contexte doit être passé correctement.
-    # On crée un contexte "bidon" ici car on ne sait pas comment FastAPI va le fournir.
-    # La meilleure approche est de laisser FastAPI gérer la requête et passer les données à PTB.
-
-    # Le webhook_handler_post s_occupe maintenant de ptb_application.process_update
-    # donc pas besoin de TypeHandler ici si on est en mode webhook.
 
     if MODE_POLLING:
         logger.info("Démarrage du bot en mode polling...")
@@ -901,30 +890,16 @@ def main_bot():
         logger.info(
             "Mode Webhook configuré (nécessite un serveur d_application externe comme FastAPI/Uvicorn)."
         )
-        logger.info("Ce script ne démarrera pas de serveur webhook lui-même.")
-        logger.info(
-            "Assurez-vous que votre infrastructure (ex: Railway) lance ce bot via une app ASGI (comme avec uvicorn main:app)."
-        )
-        # Configuration de FastAPI
         fastapi_app.add_event_handler("startup", startup_event)
         fastapi_app.add_event_handler("shutdown", shutdown_event)
 
-        # Passer le contexte PTB au handler FastAPI. Ceci est délicat.
-        # Une approche est d_utiliser une dépendance FastAPI pour créer/fournir le contexte.
-        # Pour simplifier, on va supposer que le contexte est disponible globalement ou via ptb_application.
-        # On passe ptb_application.bot. CallbackContext n_est pas directement utilisable ici.
-        # On va utiliser le ptb_application directement dans le handler.
-
         @fastapi_app.post("/")
         async def webhook_route(request: fastapi.Request):
-            return await webhook_handler_post(request, ptb_application) # Passer ptb_application comme contexte simplifié
+            return await webhook_handler_post(request, ptb_application) 
 
 if __name__ == "__main__":
     main_bot()
     if not MODE_POLLING:
-        # Lancer Uvicorn seulement si on n_est pas en mode polling et si ce script est exécuté directement
-        # (ce qui ne sera pas le cas sur Railway si le Procfile utilise `uvicorn main:fastapi_app`)
-        # Cette section est plus pour le test local.
         port = int(os.getenv("PORT", "8000"))
         logger.info(f"Démarrage du serveur Uvicorn sur le port {port} pour le mode webhook (test local)...")
         uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
