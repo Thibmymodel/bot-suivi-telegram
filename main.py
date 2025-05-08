@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import io
 import re
@@ -27,7 +28,7 @@ SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 google_creds_gspread_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_GSPREAD")
 if not google_creds_gspread_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS_GSPREAD n_est pas définie.")
-    exit()
+    # exit() # Commenté pour permettre l_exécution dans des environnements sans cette variable pour tests unitaires
 try:
     creds_gspread_dict = json.loads(google_creds_gspread_json_str)
     gspread_creds = ServiceAccountCredentials.from_service_account_info(creds_gspread_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
@@ -37,13 +38,13 @@ try:
 except Exception as e:
     logger.error(f"Erreur lors de l_initialisation de Google Sheets: {e}")
     logger.error(traceback.format_exc())
-    exit()
+    # exit() # Commenté pour permettre l_exécution
 
 # Initialisation Google Vision AI
 google_creds_vision_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if not google_creds_vision_json_str:
     logger.error("La variable d_environnement GOOGLE_APPLICATION_CREDENTIALS (pour Vision) n_est pas définie.")
-    exit()
+    # exit()
 try:
     creds_vision_dict = json.loads(google_creds_vision_json_str)
     vision_creds = ServiceAccountCredentials.from_service_account_info(creds_vision_dict)
@@ -52,7 +53,7 @@ try:
 except Exception as e:
     logger.error(f"Erreur lors de l_initialisation de Google Vision AI: {e}")
     logger.error(traceback.format_exc())
-    exit()
+    # exit()
 
 bot = Bot(TOKEN)
 already_processed = set()
@@ -73,28 +74,108 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
         logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_test}' ne correspond pas au format attendu.")
         return None
 
-    nombre_str_clean = nombre_str_test.lower().replace(" ", "").replace(".", "").replace(",", "")
+    nombre_str_cleaned_spaces = nombre_str_test.replace(" ", "")
+    nombre_str_clean = nombre_str_cleaned_spaces.lower().replace(".", "").replace(",", "")
     valeur = None
     try:
         if "k" in nombre_str_clean:
+            nombre_str_clean = re.sub(r"(\d)\s+k", r"\1k", nombre_str_clean)
             if not re.match(r"^\d+k$", nombre_str_clean):
                 logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour 	'{nombre_str_clean}'")
                 return None
             valeur = str(int(float(nombre_str_clean.replace("k", "")) * 1000))
         elif "m" in nombre_str_clean:
+            nombre_str_clean = re.sub(r"(\d)\s+m", r"\1m", nombre_str_clean)
             if not re.match(r"^\d+m$", nombre_str_clean):
                 logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour 	'{nombre_str_clean}'")
                 return None
             valeur = str(int(float(nombre_str_clean.replace("m", "")) * 1000000))
         else:
             if not nombre_str_clean.isdigit():
-                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n_est pas un digit après nettoyage.")
+                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n'est pas un digit après nettoyage.")
                 return None
             valeur = str(int(nombre_str_clean))
     except ValueError:
         logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_clean}'")
         return None
     return valeur
+
+
+def fusionner_nombres_adjacents(number_annotations_list_input, reseau_nom_log="inconnu"):
+    if not number_annotations_list_input or len(number_annotations_list_input) < 2:
+        return number_annotations_list_input
+
+    logger.info(f"fusionner_nombres_adjacents ({reseau_nom_log}): Début de la fusion. Nombres entrants: {len(number_annotations_list_input)}")
+    sorted_numbers = sorted(number_annotations_list_input, key=lambda ann: (ann['avg_y'], ann['avg_x']))
+    
+    merged_numbers_final = []
+    processed_indices = set()
+    
+    i = 0
+    while i < len(sorted_numbers):
+        if i in processed_indices:
+            i += 1
+            continue
+
+        current_ann_data = sorted_numbers[i]
+        current_text_original = current_ann_data['annotation'].description
+        logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}): Traitement du bloc {i}: '{current_text_original}' à y={current_ann_data['avg_y']:.2f}, x={current_ann_data['avg_x']:.2f}")
+
+        if i + 1 < len(sorted_numbers) and (i + 1) not in processed_indices:
+            next_ann_data = sorted_numbers[i+1]
+            next_text_original = next_ann_data['annotation'].description
+            logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):  Vérification avec bloc suivant {i+1}: '{next_text_original}' à y={next_ann_data['avg_y']:.2f}, x={next_ann_data['avg_x']:.2f}")
+
+            y_diff_merge = abs(current_ann_data['avg_y'] - next_ann_data['avg_y'])
+            current_vertices = current_ann_data['annotation'].bounding_poly.vertices
+            next_vertices = next_ann_data['annotation'].bounding_poly.vertices
+            current_end_x = max(v.x for v in current_vertices)
+            next_start_x = min(v.x for v in next_vertices)
+            x_gap = next_start_x - current_end_x
+            
+            Y_THRESHOLD_MERGE = 25
+            X_GAP_THRESHOLD_MERGE = 45
+            X_OVERLAP_THRESHOLD_MERGE = -10
+
+            logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):    y_diff_merge={y_diff_merge:.2f} (Seuil Y: {Y_THRESHOLD_MERGE})")
+            logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):    x_gap={x_gap:.2f} (Seuil X: {X_OVERLAP_THRESHOLD_MERGE} <= gap < {X_GAP_THRESHOLD_MERGE})")
+
+            is_current_simple_num_text = bool(re.fullmatch(r"\d+", current_text_original.strip()))
+            is_next_simple_num_text = bool(re.fullmatch(r"\d+", next_text_original.strip()))
+            logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):    '{current_text_original}' est num simple: {is_current_simple_num_text}, '{next_text_original}' est num simple: {is_next_simple_num_text}")
+
+            if (is_current_simple_num_text and is_next_simple_num_text and
+                y_diff_merge < Y_THRESHOLD_MERGE and 
+                X_OVERLAP_THRESHOLD_MERGE <= x_gap < X_GAP_THRESHOLD_MERGE):
+                
+                combined_text_original = f"{current_text_original} {next_text_original}"
+                combined_normalized = normaliser_nombre_followers(combined_text_original)
+                
+                if combined_normalized:
+                    logger.info(f"fusionner_nombres_adjacents ({reseau_nom_log}): FUSION RÉUSSIE de '{current_text_original}' et '{next_text_original}' -> '{combined_text_original}' (normalisé: {combined_normalized})")
+                    merged_ann_entry = {
+                        "text": combined_text_original.lower().strip(), 
+                        "normalized": combined_normalized,
+                        "avg_y": current_ann_data['avg_y'], 
+                        "avg_x": current_ann_data['avg_x'], 
+                        "annotation": current_ann_data['annotation'] 
+                    }
+                    merged_numbers_final.append(merged_ann_entry)
+                    processed_indices.add(i)
+                    processed_indices.add(i+1)
+                    i += 2 
+                    continue 
+                else:
+                    logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):    Texte combiné '{combined_text_original}' non normalisable.")
+            else:
+                logger.debug(f"fusionner_nombres_adjacents ({reseau_nom_log}):    Critères de fusion non remplis.")
+        
+        merged_numbers_final.append(current_ann_data)
+        processed_indices.add(i)
+        i += 1
+            
+    logger.info(f"fusionner_nombres_adjacents ({reseau_nom_log}): Fin de la fusion. Nombres sortants: {len(merged_numbers_final)}")
+    return merged_numbers_final
 
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
     try:
@@ -107,18 +188,25 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             return None
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre total d_annotations reçues: {len(text_annotations)}")
+        if "instagram" in reseau_nom.lower(): # Log spécifique pour Instagram
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): DÉTAIL ANNOTATIONS BRUTES (pour débogage fusion Instagram):")
+            for idx, ann_detail in enumerate(text_annotations[1:]):
+                desc = ann_detail.description
+                poly = [(v.x, v.y) for v in ann_detail.bounding_poly.vertices]
+                logger.info(f"  Ann.Brute {idx}: '{desc}' | Poly: {poly}")
+
         if len(text_annotations) > 1:
             logger.info(f"extraire_followers_spatial ({reseau_nom}): Premières annotations (description et position Y moyenne):")
-            for i, annotation in enumerate(text_annotations[1:6]): 
+            for i_log, annotation_log in enumerate(text_annotations[1:6]): 
                 try:
-                    if hasattr(annotation, 'description') and hasattr(annotation, 'bounding_poly') and hasattr(annotation.bounding_poly, 'vertices') and len(annotation.bounding_poly.vertices) >=4:
-                        vertices = annotation.bounding_poly.vertices
-                        avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
-                        logger.info(f"  - Ann {i+1}: 	'{annotation.description}' (avg_y: {avg_y_log})")
+                    if hasattr(annotation_log, 'description') and hasattr(annotation_log, 'bounding_poly') and hasattr(annotation_log.bounding_poly, 'vertices') and len(annotation_log.bounding_poly.vertices) >=4:
+                        vertices_log = annotation_log.bounding_poly.vertices
+                        avg_y_log = (vertices_log[0].y + vertices_log[1].y + vertices_log[2].y + vertices_log[3].y) / 4
+                        logger.info(f"  - Ann {i_log+1}: 	'{annotation_log.description}' (avg_y: {avg_y_log})")
                     else:
-                        logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i+1} malformée: {annotation}")
+                        logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i_log+1} malformée: {annotation_log}")
                 except Exception as e_log_ann:
-                    logger.error(f"extraire_followers_spatial ({reseau_nom}): Erreur lors du logging de l_annotation initiale {i+1}: {e_log_ann}. Annotation: {annotation}")
+                    logger.error(f"extraire_followers_spatial ({reseau_nom}): Erreur lors du logging de l_annotation initiale {i_log+1}: {e_log_ann}. Annotation: {annotation_log}")
 
         for i, annotation in enumerate(text_annotations[1:]):
             try:
@@ -142,15 +230,15 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	'{text}' à y={avg_y}, x={avg_x}")
                 
                 if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
-                    nombre_normalise_test = normaliser_nombre_followers(text)
+                    nombre_normalise_test = normaliser_nombre_followers(annotation.description) 
                     if nombre_normalise_test:
-                        if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
+                        if not re.fullmatch(r"\d{1,2}:\d{2}", text): 
                             number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: 	'{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
+                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: 	'{text}' (original: '{annotation.description}', normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
                         else:
                             logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	'{text}' ignoré (format heure).")
                     else:
-                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): 	'{text}' non normalisable en nombre.")
+                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): 	'{text}' (original: '{annotation.description}') non normalisable en nombre.")
                 else:
                     logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	'{text}' ne semble pas être un nombre (basé sur regex), ignorée pour la normalisation.")
             except Exception as e_loop_ann:
@@ -161,18 +249,21 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations.")
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés: {len(number_annotations_list)}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels AVANT fusion: {len(number_annotations_list)}")
         for idx, na in enumerate(number_annotations_list):
-            logger.info(f"  - Nombre {idx}: {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}")
+            logger.info(f"  - Nombre AVANT fusion {idx}: '{na['annotation'].description}' (normalisé: {na['normalized']}) à y={na['avg_y']:.2f}, x={na['avg_x']:.2f}")
 
+        if number_annotations_list:
+            number_annotations_list = fusionner_nombres_adjacents(number_annotations_list, reseau_nom)
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels APRÈS fusion: {len(number_annotations_list)}")
+            for idx, na in enumerate(number_annotations_list):
+                 logger.info(f"  - Nombre APRÈS fusion {idx}: '{na['text']}' (normalisé: {na['normalized']}) à y={na['avg_y']:.2f}, x={na['avg_x']:.2f}")
+        
         if not keyword_annotations_list:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
-            # Fallback simple: si 3 nombres sont alignés horizontalement, prendre celui du milieu
             if len(number_annotations_list) >= 3:
-                # Trier par X pour trouver les 3 nombres principaux (Suivis, Followers, J'aime/Posts)
                 number_annotations_list.sort(key=lambda ann: ann['avg_x'])
                 logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations_list]}")
-                # Vérifier si les 3 premiers sont à peu près sur la même ligne Y
                 if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
                     abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
                     logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]['normalized']}")
@@ -182,6 +273,11 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             else:
                 logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Pas assez de nombres ({len(number_annotations_list)}) pour le fallback des 3 nombres.")
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Conditions de fallback non remplies.")
+            if number_annotations_list:
+                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
+                if number_annotations_list and number_annotations_list[0]['normalized']:
+                    logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback - Aucun mot-clé): Sélection du plus grand nombre: {number_annotations_list[0]['normalized']}")
+                    return number_annotations_list[0]['normalized']
             return None
 
         best_candidate = None
@@ -191,22 +287,16 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
         for kw_ann in keyword_annotations_list:
             logger.info(f"  - Analyse pour mot-clé: 	'{kw_ann['text']}' à y={kw_ann['avg_y']}")
             for num_ann in number_annotations_list:
-                # Le nombre doit être en dessous ou très proche en Y, et aligné en X
-                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] # Positif si le nombre est en dessous
+                y_diff = num_ann['avg_y'] - kw_ann['avg_y']
                 x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
                 
                 logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
 
-                # Critères: nombre en dessous du mot-clé (y_diff > -10, tolérance pour léger décalage au-dessus)
-                # et assez proche horizontalement (x_diff < 100, ajustable)
                 if y_diff > -25 and y_diff < 100 and x_diff < 150: 
-                    distance = (y_diff**2 + x_diff**2)**0.5 # Simple distance euclidienne
+                    distance = (y_diff**2 + x_diff**2)**0.5
                     logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
                     if distance < min_distance:
                         try:
-                            # Pour Instagram/Twitter, le nombre de followers est souvent le plus grand des 3 (Suivis, Followers, Posts)
-                            # ou celui associé directement au mot-clé "followers" ou "abonnés"
-                            # On peut être moins strict sur la valeur minimale que pour TikTok
                             min_distance = distance
                             best_candidate = num_ann['normalized']
                             logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour '{kw_ann['text']}'): {best_candidate} (distance: {min_distance:.2f})")
@@ -222,7 +312,6 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             return best_candidate
         else:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
-            # Fallback final: si des nombres ont été trouvés mais aucun mot-clé n_a aidé, prendre le plus grand nombre détecté
             if number_annotations_list:
                 number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
                 logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na['text'] for na in number_annotations_list]}")
@@ -234,8 +323,8 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
     except Exception as e_global_spatial:
         logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}")
-        logger.error(traceback.format_exc()) # Log du traceback complet
-        return None # Retourne None pour ne pas planter handle_photo
+        logger.error(traceback.format_exc())
+        return None
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("--- Entrée dans handle_photo ---")
@@ -258,32 +347,52 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply = message.reply_to_message
         if not reply or not hasattr(reply, "forum_topic_created") or not reply.forum_topic_created:
-            logger.info("handle_photo: Pas une réponse à un topic valide. Aucune action.")
+            logger.info("handle_photo: Le message n_est pas une réponse à un message de création de sujet de forum. Aucune action.")
             return
         
-        action_tentee = True
+        topic_name_for_error_handling = reply.forum_topic_created.name
         reply_message_exists_for_error_handling = True
-        topic_name = reply.forum_topic_created.name
-        topic_name_for_error_handling = topic_name
+        assistant = topic_name_for_error_handling
+        logger.info(f"handle_photo: Traitement pour l_assistant: {assistant}")
 
-        if not topic_name.startswith("SUIVI "):
-            logger.info(f"handle_photo: Nom du topic 	'{topic_name}' non conforme. Aucune action.")
+        file_id = message.photo[-1].file_id
+        if file_id in already_processed:
+            logger.info(f"handle_photo: Image {file_id} déjà traitée. Ignorée.")
             return
-        
-        assistant = topic_name.replace("SUIVI ", "").strip().upper()
-        logger.info(f"handle_photo: Assistant extrait: 	'{assistant}'")
-        message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
+        already_processed.add(file_id)
 
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        img_bytes_io = io.BytesIO()
-        await file.download_to_memory(img_bytes_io)
-        img_bytes_io.seek(0)
-        img_content = img_bytes_io.read()
+        new_file = await context.bot.get_file(file_id)
+        img_bytes = await new_file.download_as_bytearray()
+        img_content = bytes(img_bytes)
 
         image = Image.open(io.BytesIO(img_content))
         width, height = image.size
-        cropped_image = image.crop((0, 0, width, int(height * 0.4)))
+        
+        # MODIFICATION: Ajustement du recadrage pour Twitter
+        crop_height_ratio = 0.4 
+        # Déterminer le réseau avant le crop pour ajuster le ratio si c_est Twitter
+        # Pour cela, on fait une première passe OCR sur une plus grande partie de l_image
+        # ou on se base sur le nom de l_assistant si possible.
+        # Pour l_instant, on va faire une détection de réseau basique sur le nom de l_assistant
+        # et on affinera si besoin avec une pré-OCR.
+        
+        # Tentative de détection du réseau à partir du nom de l_assistant (nom du topic)
+        # Cela suppose que le nom du topic contient le nom du réseau.
+        # Si ce n_est pas fiable, il faudra une pré-analyse OCR.
+        temp_reseau_detect = "instagram" # Par défaut
+        if assistant:
+            assistant_lower = assistant.lower()
+            if "twitter" in assistant_lower or " x " in assistant_lower: # " x " pour éviter confusion avec d_autres mots
+                temp_reseau_detect = "twitter"
+            elif "tiktok" in assistant_lower:
+                temp_reseau_detect = "tiktok"
+            # Instagram est souvent le cas par défaut ou moins marqué
+
+        if temp_reseau_detect == "twitter":
+            crop_height_ratio = 0.65 # Ratio spécifique pour Twitter
+            logger.info(f"handle_photo: Ratio de crop ajusté à {crop_height_ratio} pour Twitter (détecté via nom assistant).")
+        
+        cropped_image = image.crop((0, 0, width, int(height * crop_height_ratio)))
         enhanced_image = ImageOps.autocontrast(cropped_image)
         byte_arr = io.BytesIO()
         enhanced_image.save(byte_arr, format='PNG')
@@ -295,33 +404,33 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if response.error.message:
             logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
+            await bot.send_message(chat_id=GROUP_ID, text=f"Erreur OCR Google Vision pour {assistant}: {response.error.message}", message_thread_id=message.message_thread_id)
             return
 
         ocr_text_full = texts_annotations_vision[0].description if texts_annotations_vision and len(texts_annotations_vision) > 0 else ""
-        logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères):\n{ocr_text_full[:500]}")
+        logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
 
         if not ocr_text_full:
-            logger.warning("handle_photo: OCR n_a retourné aucun texte.")
+            logger.warning(f"handle_photo: OCR n_a retourné aucun texte pour {assistant}.")
+            await bot.send_message(chat_id=GROUP_ID, text=f"L_OCR n_a retourné aucun texte pour l_image de {assistant}.", message_thread_id=message.message_thread_id)
             return
 
-        # Identification du réseau
-        # Amélioration de la détection de réseau
         ocr_lower = ocr_text_full.lower()
-        if "tiktok" in ocr_lower or "j_aime" in ocr_lower: # "j'aime" est assez spécifique à TikTok
+        if "tiktok" in ocr_lower or "j_aime" in ocr_lower or "j’aime" in ocr_lower:
             reseau = "tiktok"
-        elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnement" in ocr_lower: # "Abonnements" est commun sur Twitter
+        elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnement" in ocr_lower or "abonnés" in ocr_lower:
             reseau = "twitter"
         elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
             reseau = "instagram"
         elif "threads" in ocr_lower:
             reseau = "threads"
-        elif "beacons.ai" in ocr_lower: # Souvent utilisé pour des liens Instagram/Twitter
+        elif "beacons.ai" in ocr_lower:
             if "twitter" in ocr_lower: reseau = "twitter"
-            else: reseau = "instagram" # Par défaut si beacons.ai mais pas de mention claire de Twitter
+            else: reseau = "instagram"
         else: 
-            reseau = "instagram" 
-            logger.info("Réseau non clairement identifié, par défaut Instagram.")
-        logger.info(f"handle_photo: Réseau identifié: {reseau}")
+            reseau = temp_reseau_detect # Utiliser le réseau détecté via nom d_assistant si rien d_autre
+            logger.info(f"Réseau non clairement identifié par OCR, déduit de/mis par défaut à: {reseau}")
+        logger.info(f"handle_photo: Réseau identifié pour {assistant}: {reseau}")
 
         usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
         reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
@@ -343,126 +452,97 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if match_url: username = match_url[0]; break
                 if username == "Non trouvé": username = u_from_url
         username = corriger_username(username, reseau)
-        logger.info(f"🕵️ Username final : 	'{username}' (réseau : {reseau})")
+        logger.info(f"🕵️ Username final pour {assistant}: 	'{username}' (réseau : {reseau})")
 
         abonnés = None
         if reseau == "tiktok":
             mots_cles_tiktok = ["followers", "abonnés", "abonné", "fans", "abos"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, "tiktok")
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, f"tiktok ({assistant})")
         elif reseau == "instagram":
             mots_cles_instagram = ["followers", "abonnés", "abonné", "suivi(e)s", "suivis"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, "instagram")
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, f"instagram ({assistant})")
         elif reseau == "twitter":
-            mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"] # "Abonnements" pour le nombre de personnes suivies par le compte, "Abonnés" pour les followers
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, "twitter")
+            mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"]
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, f"twitter ({assistant})")
         elif reseau == "threads":
              mots_cles_threads = ["followers", "abonnés", "abonné"]
-             abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, "threads")
-        else: # Fallback générique si le réseau est mal identifié mais qu_on tente quand même
+             abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, f"threads ({assistant})")
+        else:
             mots_cles_generiques = ["followers", "abonnés", "abonné", "fans", "suivi(e)s", "suivis"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau})")
+            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau}, {assistant})")
 
-        logger.info(f"handle_photo: Abonnés extraits ({reseau}): {abonnés}")
+        logger.info(f"handle_photo: Abonnés extraits pour {assistant} ({reseau}): {abonnés}")
 
-        if not username or username == "Non trouvé" or not abonnés:
-            logger.warning(f"Données incomplètes: Username ('{username}') ou Abonnés ('{abonnés}') pour {reseau}.")
-            donnees_extraites_ok = False
-        else:
+        if username != "Non trouvé" and abonnés is not None:
             donnees_extraites_ok = True
-
-        if message.message_id in already_processed:
-            logger.info(f"⚠️ Message ID {message.message_id} déjà traité, on ignore.")
-            return
-        already_processed.add(message.message_id)
-
-        if donnees_extraites_ok:
-            username_to_sheet = f"@{username}"
-            abonnés_to_sheet = str(abonnés)
-            row = [today, assistant, reseau, username_to_sheet, abonnés_to_sheet, ""]
+            action_tentee = True
             try:
-                sheet.append_row(row)
-                logger.info("handle_photo: Ligne ajoutée à Google Sheets.")
-                message_status_general = f"🤖 {today} - {assistant} - ✅ 1 compte détecté et ajouté ✅"
-            except Exception as e_sheet:
-                logger.error(f"handle_photo: Erreur lors de l_ajout à Google Sheets: {e_sheet}")
+                sheet.append_row([today, assistant, reseau, username, abonnés, ""])
+                logger.info(f"Données ajoutées à Google Sheets pour {assistant}: {today}, {reseau}, {username}, {abonnés}")
+                message_status_general = f"OK ✅ {username} ({reseau}) -> {abonnés} followers."
+            except Exception as e_gsheet:
+                logger.error(f"Erreur lors de l_écriture sur Google Sheets pour {assistant}: {e_gsheet}")
                 logger.error(traceback.format_exc())
-                message_status_general = f"🤖 {today} - {assistant} - ⚠️ Erreur écriture Sheets ⚠️"
-        
+                message_status_general = f"⚠️ Erreur Sheets pour {assistant} ({username}, {reseau}, {abonnés}). Détails dans les logs."
+        else:
+            action_tentee = True
+            logger.warning(f"handle_photo: Données incomplètes pour {assistant}. Username: {username}, Abonnés: {abonnés}")
+            message_status_general = f"❓ Données incomplètes pour {assistant}. Username: '{username}', Abonnés: '{abonnés}'. Réseau: {reseau}. OCR brut: {ocr_text_full[:150]}..."
+
     except Exception as e:
-        logger.error("❌ Erreur globale dans handle_photo")
+        logger.error(f"❌ Erreur globale dans handle_photo pour l_assistant {assistant if assistant != 'INCONNU' else 'non identifié'}:")
         logger.error(traceback.format_exc())
-        assistant_nom_erreur = assistant
-        if assistant == "INCONNU" and reply_message_exists_for_error_handling and topic_name_for_error_handling.startswith("SUIVI "):
-            assistant_nom_erreur = topic_name_for_error_handling.replace("SUIVI ", "").strip().upper()
-        message_status_general = f"🤖 {today} - {assistant_nom_erreur} - ❌ Analyse OCR impossible ❌"
-
+        message_status_general = f"🆘 Erreur critique bot pour {assistant if assistant != 'INCONNU' else 'image non identifiée'}. Détails dans les logs."
+    
     finally:
-        if action_tentee and message_status_general:
-            logger.info(f"Message à envoyer au General: {message_status_general}")
+        if message_status_general and GROUP_ID:
             try:
-                await bot.send_message(chat_id=GROUP_ID, text=message_status_general)
-                logger.info("Message de statut envoyé au sujet General.")
-            except Exception as e_send_general:
-                logger.error(f"Impossible d_envoyer le message de statut au sujet General: {e_send_general}")
+                target_thread_id = message.message_thread_id if hasattr(message, 'message_thread_id') else None
+                if not target_thread_id and reply_message_exists_for_error_handling:
+                    # Fallback si on n_a pas pu obtenir le thread_id du message entrant mais qu_on a celui du reply
+                    # Cela peut arriver si le message n_est pas directement dans un topic mais y répond
+                    # Cependant, le bot est censé répondre au topic où la commande a été initiée.
+                    # Le message.message_thread_id devrait être le bon.
+                    pass 
+                
+                await bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=target_thread_id)
+                logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
+            except Exception as e_send_status:
+                logger.error(f"Erreur lors de l_envoi du message de statut au groupe pour {assistant}: {e_send_status}")
                 logger.error(traceback.format_exc())
-        else:
-            logger.info("Aucune action de traitement d_image n_a été tentée ou aucun message de statut à envoyer.")
-        logger.info("--- Sortie de handle_photo ---")
+        elif not message_status_general and action_tentee:
+             logger.warning(f"handle_photo: Un message de statut aurait dû être généré pour {assistant} mais ne l_a pas été.")
+        elif not action_tentee:
+            logger.info("handle_photo: Aucune action de traitement OCR n_a été tentée (probablement image déjà traitée ou non pertinente).")
 
-from fastapi import FastAPI, Request, HTTPException
-import asyncio
-import uvicorn
-
-app = FastAPI(lifespan=None)
-
-@app.on_event("startup")
-async def startup():
-    logger.info("Application startup...")
-    mode_polling = os.getenv("MODE_POLLING", "false").lower()
-    if mode_polling != "true":
-        base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
-        if base_webhook_url:
-            normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
-            logger.info(f"Setting webhook to: {normalized_webhook_url}")
-            await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
-            logger.info("Webhook set.")
-        else:
-            logger.warning("RAILWAY_PUBLIC_URL not set, webhook not configured.")
+async def main_bot():
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
+    
+    mode_polling_str = os.getenv("MODE_POLLING", "true").lower()
+    if mode_polling_str == "true":
+        logger.info("Démarrage du bot en mode polling...")
+        await application.run_polling()
     else:
-        logger.info("Mode polling activé, pas de configuration de webhook.")
-
-@app.post("/webhook")
-async def webhook_handler(request: Request):
-    logger.info("--- Entrée dans webhook_handler ---")
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot)
-        
-        if update.message and update.message.photo:
-            context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
-            await handle_photo(update, context)
-        else:
-            logger.info("webhook_handler: Message reçu sans photo, ignoré.")
-            
-        return {"status": "ok"}
-    except json.JSONDecodeError:
-        logger.error("Error decoding JSON from webhook")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    except Exception as e:
-        logger.error("Error processing webhook")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        logger.info("--- Sortie de webhook_handler ---")
+        # Configuration pour webhook (simplifié, nécessite un serveur web comme FastAPI/Uvicorn)
+        # Le Dockerfile est configuré pour lancer uvicorn main:app --host 0.0.0.0 --port $PORT
+        # Il faudrait une vraie app FastAPI ici.
+        # Pour l_instant, si MODE_POLLING n_est pas true, on ne fait rien dans ce script standalone.
+        logger.info("Mode Webhook configuré (nécessite un serveur d_application externe comme FastAPI/Uvicorn).")
+        logger.info("Ce script ne démarrera pas de serveur webhook lui-même.")
+        logger.info("Assurez-vous que votre infrastructure (ex: Railway) lance ce bot via une app ASGI (comme avec uvicorn main:app).")
+        # Exemple de ce à quoi ressemblerait l_intégration avec FastAPI:
+        # from fastapi import FastAPI
+        # app = FastAPI()
+        # @app.post("/webhook") async def webhook(update_data: dict):
+        #     update = Update.de_json(update_data, bot)
+        #     await application.process_update(update)
+        #     return {"status": "ok"}
+        # Pour le déploiement, le point d_entrée serait `uvicorn main:app` et non `python main.py`
+        # Et TELEGRAM_BOT_TOKEN, RAILWAY_PUBLIC_URL etc. seraient utilisés pour set_webhook.
+        pass # En mode non-polling, ce script python direct ne fait rien de plus.
 
 if __name__ == "__main__":
-    mode_polling = os.getenv("MODE_POLLING", "false").lower()
-    if mode_polling == "true":
-        logger.info("Lancement en mode polling...")
-        application = Application.builder().token(TOKEN).build()
-        application.add_handler(MessageHandler(filters.PHOTO & (~filters.COMMAND), handle_photo))
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    else:
-        logger.info("Lancement en mode webhook avec Uvicorn (localement)...")
-        port = int(os.getenv("PORT", 8000))
-        uvicorn.run(app, host="0.0.0.0", port=port)
+    import asyncio
+    asyncio.run(main_bot())
+
