@@ -116,11 +116,9 @@ def extraire_followers_spatial(texts, keywords, context_message=""):
 
     logger.info(f"extraire_followers_spatial ({context_message}): Found {len(relevant_annotations)} relevant annotations for keywords: {keywords}")
 
-    # Combine all text for number extraction, assuming numbers are close to keywords
     combined_text = " ".join([ann.description for ann in relevant_annotations])
     logger.info(f"extraire_followers_spatial ({context_message}): Combined text for number search: '{combined_text}'")
 
-    # Find all numbers in the combined text
     numbers_found = re.findall(r'\d[\d,\s]*[kKmM]?', combined_text)
     logger.info(f"extraire_followers_spatial ({context_message}): Numbers found in combined text: {numbers_found}")
 
@@ -128,7 +126,6 @@ def extraire_followers_spatial(texts, keywords, context_message=""):
         logger.info(f"extraire_followers_spatial ({context_message}): No numbers found near keywords.")
         return None
 
-    # Attempt to normalize and return the first valid number found
     for num_str in numbers_found:
         normalized_num = normaliser_nombre_followers(num_str)
         if normalized_num:
@@ -139,23 +136,33 @@ def extraire_followers_spatial(texts, keywords, context_message=""):
     return None
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("--- Entrée dans handle_photo ---")
+    logger.info("--- Entrée dans handle_photo --- VÉRIFICATION APPEL --- ") # Log d'entrée
     assistant = "INCONNU"
     today = datetime.datetime.now().strftime("%d/%m/%Y")
     message_status_general = None 
     donnees_extraites_ok = False
     action_tentee = False
+    message_thread_id_to_reply = None
 
     try:
         message = update.message
-        if not message or not message.photo:
-            logger.info("handle_photo: Message None ou sans photo. Aucune action.")
+        if not message:
+            logger.warning("handle_photo: update.message est None. Aucune action.")
+            return
+        
+        message_thread_id_to_reply = message.message_thread_id # Sauvegarder pour le finally
+
+        if not message.photo:
+            logger.info("handle_photo: Message ne contient pas de photo. Aucune action.")
+            # Pas de message d'erreur à l'utilisateur ici, car ce handler ne devrait être appelé que pour les photos.
             return
 
         reply = message.reply_to_message
         if not reply or not hasattr(reply, 'forum_topic_created') or not reply.forum_topic_created:
-            logger.info("handle_photo: Le message n'est pas une réponse à un message de création de sujet de forum. Aucune action.")
-            return
+            logger.warning("handle_photo: Le message n'est pas une réponse à un message de création de sujet de forum.")
+            message_status_general = "⚠️ L'image doit être envoyée en réponse au message de création du sujet du forum pour être traitée."
+            # Le finally enverra ce message
+            return # Arrêter le traitement ici
         
         topic_name_for_error_handling = reply.forum_topic_created.name
         assistant = topic_name_for_error_handling
@@ -205,7 +212,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_status_general = f"Erreur OCR Google Vision pour {assistant}: {response.error.message}"
         elif not texts_annotations_vision or not texts_annotations_vision[0].description:
             logger.warning(f"handle_photo: OCR n'a retourné aucun texte pour {assistant}.")
-            message_status_general = f"L_OCR n_a retourné aucun texte pour l'image de {assistant}."
+            message_status_general = f"L_OCR n'a retourné aucun texte pour l'image de {assistant}."
         else:
             ocr_text_full = texts_annotations_vision[0].description
             logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères) pour {assistant}:\n{ocr_text_full[:500]}")
@@ -296,22 +303,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_status_general = f"🆘 Erreur critique bot pour {assistant}. Détails dans les logs."
     
     finally:
-        if message_status_general and GROUP_ID and hasattr(message, 'message_thread_id'): 
+        if message_status_general and GROUP_ID and message_thread_id_to_reply:
             try:
-                await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=message.message_thread_id)
+                await ptb_application.bot.send_message(chat_id=GROUP_ID, text=message_status_general, message_thread_id=message_thread_id_to_reply)
                 logger.info(f"Message de statut envoyé au groupe pour {assistant}: {message_status_general}")
             except Exception as e_send_status:
                 logger.error(f"Erreur lors de l'envoi du message de statut au groupe pour {assistant}: {e_send_status}")
                 logger.error(traceback.format_exc())
         elif not message_status_general and action_tentee:
             logger.warning(f"handle_photo: Un message de statut aurait dû être généré pour {assistant} mais ne l'a pas été.")
-        elif not action_tentee:
-            logger.info("handle_photo: Aucune action de traitement OCR n'a été tentée (probablement image déjà traitée ou non pertinente).")
+        # Ne pas logger si aucune action n'a été tentée et qu'il n'y a pas de message, car cela peut être normal (ex: image déjà traitée)
+
+ptb_application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
 @app.on_event("startup")
 async def startup_event():
     try:
-        await ptb_application.initialize() # CORRECTION: Initialisation de l'application PTB
+        await ptb_application.initialize()
         base_url = RAILWAY_PUBLIC_URL.rstrip("/")
         webhook_url = f"{base_url}/"
         await ptb_application.bot.set_webhook(url=webhook_url, allowed_updates=["message"])
@@ -322,16 +330,20 @@ async def startup_event():
 
 @app.post("/") 
 async def webhook_handler_post(request: Request):
+    logger.info("--- Entrée dans webhook_handler_post ---") # Log d'entrée
     try:
         data = await request.json()
+        logger.info(f"webhook_handler_post: Données JSON reçues: {json.dumps(data, indent=2)}") # Log des données JSON
         update = Update.de_json(data, ptb_application.bot)
+        logger.info("webhook_handler_post: Objet Update créé avec succès.")
         await ptb_application.process_update(update)
+        logger.info("webhook_handler_post: ptb_application.process_update(update) terminé.")
         return {"status": "ok"}
     except json.JSONDecodeError:
-        logger.error("telegram_webhook: Erreur de décodage JSON.")
+        logger.error("webhook_handler_post: Erreur de décodage JSON.")
         raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
-        logger.error(f"telegram_webhook: Erreur lors du traitement de la mise à jour: {e}")
+        logger.error(f"webhook_handler_post: Erreur lors du traitement de la mise à jour: {e}")
         logger.error(traceback.format_exc())
         return {"status": "error processing update"} 
 
