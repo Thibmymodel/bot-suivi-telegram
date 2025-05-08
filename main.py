@@ -197,7 +197,6 @@ def normaliser_nombre_followers(nombre_str: Optional[str]) -> Optional[str]:
 
     nombre_str_test = nombre_str.strip()
     if not re.match(r"^[\d.,\s]*[kKm]?$", nombre_str_test, re.IGNORECASE):
-        # Utilisation de guillemets simples pour la chaîne dans la f-string
         logger.debug(
             f"normaliser_nombre_followers: 	Ó{nombre_str_test}	 ne correspond pas au format attendu."
         )
@@ -235,7 +234,7 @@ def normaliser_nombre_followers(nombre_str: Optional[str]) -> Optional[str]:
 
 def fusionner_nombres_adjacents(
     text_annotations: List[vision.entity_annotation.EntityAnnotation],
-    max_pixel_gap: int = 30, # Augmenté pour Instagram "2 570"
+    max_pixel_gap: int = 30, 
     assistant_nom: str = "",
 ) -> List[vision.entity_annotation.EntityAnnotation]:
     if not text_annotations or len(text_annotations) == 0: 
@@ -303,7 +302,6 @@ def fusionner_nombres_adjacents(
                 and 0 <= gap_x < max_pixel_gap
                 and re.search(r"\d", next_ann.description)
             ):
-                # Correction f-string
                 log_current_desc = current_desc
                 log_next_ann_desc = next_ann.description
                 logger.info(
@@ -420,7 +418,6 @@ def extraire_followers_spatial(
                             + vertices[2].y
                             + vertices[3].y
                         ) / 4
-                        # Correction f-string
                         ann_desc = annotation.description
                         logger.info(
                             f"  - Ann {i+1} (post-fusion): 	Ó{ann_desc}	 (avg_y: {avg_y_log:.0f})"
@@ -480,13 +477,11 @@ def extraire_followers_spatial(
                                 "annotation": annotation,
                             }
                         )
-                        # Correction f-string
                         ann_desc_norm = annotation.description
                         logger.info(
                             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): NOMBRE POTENTIEL TROUVÉ: 	Ó{ann_desc_norm}	 (normalisé: {nombre_normalise_test}) à y={avg_y:.0f}, x={avg_x:.0f}"
                         )
                     else:
-                        # Correction f-string
                         ann_desc_heure = annotation.description
                         logger.info(
                             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Nombre 	Ó{ann_desc_heure}	 ignoré (format heure)."
@@ -503,7 +498,6 @@ def extraire_followers_spatial(
             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Fin de l_analyse des annotations. Mots-clés: {len(keyword_annotations_list)}, Nombres: {len(number_annotations_list)}"
         )
         for idx, na in enumerate(number_annotations_list):
-            # Correction f-string pour les accès au dictionnaire 'na'
             na_text = na["text"]
             na_normalized = na["normalized"]
             na_avg_y = na["avg_y"]
@@ -518,7 +512,6 @@ def extraire_followers_spatial(
                     key=lambda x: int(x.get("normalized", "0")),
                     reverse=True,
                 )
-                # Correction f-string
                 sel_num_norm = number_annotations_list[0]["normalized"]
                 logger.info(
                     f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback sans mot-clé): Sélection du plus grand nombre: {sel_num_norm}"
@@ -536,7 +529,6 @@ def extraire_followers_spatial(
             f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé."
         )
         for kw_ann in keyword_annotations_list:
-            # Correction f-string
             kw_text = kw_ann["text"]
             kw_avg_y = kw_ann["avg_y"]
             logger.info(f"  - Analyse pour mot-clé: 	Ó{kw_text}	 à y={kw_avg_y:.0f}")
@@ -549,7 +541,6 @@ def extraire_followers_spatial(
                     if distance < min_distance:
                         min_distance = distance
                         best_candidate = num_ann["normalized"]
-                        # Correction f-string
                         kw_text_cand = kw_ann["text"]
                         logger.info(
                             f"      NOUVEAU MEILLEUR CANDIDAT (pour 	Ó{kw_text_cand}	): {best_candidate} (distance: {min_distance:.2f})"
@@ -570,7 +561,6 @@ def extraire_followers_spatial(
                     reverse=True,
                 )
                 if number_annotations_list and number_annotations_list[0]["normalized"]:
-                    # Correction f-string
                     sel_num_norm_fin = number_annotations_list[0]["normalized"]
                     logger.warning(
                         f"extraire_followers_spatial ({reseau_nom} - {assistant_nom}) (Fallback final): Sélection du plus grand nombre: {sel_num_norm_fin}"
@@ -599,8 +589,10 @@ def identifier_reseau_et_username(
         return "inconnu", None
 
     full_text = text_annotations[0].description.lower()
+    # Utilisation d_une variable temporaire pour le texte formaté pour le log
+    log_full_text_preview = full_text[:500].replace("\n", " ")
     logger.info(
-        f"identifier_reseau_et_username ({assistant_nom}): Texte complet pour identification: \n{full_text[:500]}..."
+        f"identifier_reseau_et_username ({assistant_nom}): Texte complet pour identification: \n{log_full_text_preview}..."
     )
 
     reseau_scores = {name: 0 for name in RESEAUX_SOCIALS_KEYWORDS}
@@ -623,6 +615,7 @@ def identifier_reseau_et_username(
     username = None
     if identified_reseau != "inconnu" and identified_reseau in USERNAME_PATTERNS:
         pattern = USERNAME_PATTERNS[identified_reseau]
+        # Utiliser text_annotations[0].description (original case) pour la regex, pas full_text (lower case)
         matches = re.findall(pattern, text_annotations[0].description)
         if matches:
             potential_usernames = []
@@ -635,7 +628,8 @@ def identifier_reseau_et_username(
                 if m and len(m) > 2 and not m.lower() in ["profil", "modifier", "accueil"]:
                     potential_usernames.append(m)
             if potential_usernames:
-                username = potential_usernames[0]
+                # Prendre le username le plus long, souvent plus pertinent
+                username = max(potential_usernames, key=len) 
                 logger.info(
                     f"identifier_reseau_et_username ({assistant_nom}): Username potentiel trouvé par regex: {username}"
                 )
@@ -694,14 +688,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"handle_photo: Assistant 	Ó{assistant}	 identifié via réponse à la création du topic 	Ó{topic_name}	."
         )
     elif message.is_topic_message and message.message_thread_id:
-        assistant = f"INCONNU (TopicID: {message.message_thread_id})"
+        # Pour récupérer le nom du topic, il faudrait un appel à get_forum_topic_by_id ou une logique plus complexe.
+        # Pour l_instant, on ne peut pas récupérer le nom du topic directement depuis l_objet message.
+        # On va donc utiliser le TopicID pour l_instant.
+        # Si le nom du topic est crucial, il faudra investiguer comment le récupérer.
+        # Le code initial de l_utilisateur ne semblait pas non plus le récupérer directement dans ce cas.
+        assistant = f"INCONNU (TopicID: {message.message_thread_id})" 
         logger.warning(
             f"handle_photo: Image postée directement dans le topic ID {message.message_thread_id}. "
-            f"L_assistant ne peut être déterminé automatiquement. Pour une identification, répondez au message de création du topic."
+            f"L_assistant n_a pas pu être déterminé à partir du nom du topic. "
+            f"Pour une identification basée sur le nom, répondez au message de création du topic."
         )
         status_message += (
-            f"Impossible de déterminer l_assistant pour l_image postée directement dans le topic (ID: {message.message_thread_id}). "
-            f"Pour une identification correcte, veuillez répondre au message de création du sujet avec l_image.\n"
+            f"Impossible de déterminer l_assistant à partir du nom du topic pour l_image postée directement (TopicID: {message.message_thread_id}). "
+            f"Pour une identification correcte par nom, veuillez répondre au message de création du sujet avec l_image.\n"
         )
     else:
         logger.info(
@@ -749,7 +749,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise Exception(f"Erreur de l_API Vision: {response.error.message}")
 
         if texts:
-            logger.info(f"handle_photo ({assistant}): Texte extrait par OCR (début): {texts[0].description[:200].replace("\n", " ")}")
+            # Correction de la f-string pour l_affichage du log (SyntaxError)
+            ocr_text_preview = texts[0].description[:200].replace("\n", " ")
+            logger.info(f"handle_photo ({assistant}): Texte extrait par OCR (début): {ocr_text_preview}")
+            
             reseau_identifie, username_extrait = identifier_reseau_et_username(
                 texts, assistant_nom=assistant
             )
@@ -794,7 +797,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_message += (
                     f"<b>Assistant {assistant}</b>:\n"
                     f"Traitement OCR terminé, mais informations incomplètes.\n"
-                    # Correction f-string
                     f"Réseau: {reseau_identifie if reseau_identifie != 'inconnu' else 'Non identifié'}\n"
                     f"Username: {username_extrait if username_extrait else 'Non trouvé'}\n"
                     f"Abonnés: {abonnés_extraits if abonnés_extraits else 'Non trouvé'}"
@@ -826,7 +828,8 @@ async def webhook_handler_post(request: fastapi.Request, ptb_context: ContextTyp
     logger.info("--- Entrée dans webhook_handler_post ---")
     try:
         update_data = await request.json()
-        logger.debug(f"Webhook received data: {json.dumps(update_data, indent=2)}")
+        # Ne pas logger toutes les données du webhook en production si elles sont volumineuses ou sensibles
+        # logger.debug(f"Webhook received data: {json.dumps(update_data, indent=2)}") 
         update = Update.de_json(data=update_data, bot=ptb_context.bot)
         await ptb_application.process_update(update)
         return fastapi.Response(content="OK", status_code=200)
