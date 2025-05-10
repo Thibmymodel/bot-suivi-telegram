@@ -62,37 +62,56 @@ with open("known_handles.json", "r", encoding="utf-8") as f:
 
 def corriger_username(username: str, reseau: str) -> str:
     if reseau == "instagram" and username.startswith("@"):
+        # For Instagram, the @ is often included in OCR but known_handles might not have it,
+        # or the desired format in sheets is without it.
         return username[1:]
+    if reseau == "threads" and not username.startswith("@") and username != "Non trouvé" and username != "":
+        return f"@{username}"
+    # For other networks like Twitter, TikTok, the @ is usually expected and handled by initial regex or known_handles.
     return username
 
 def normaliser_nombre_followers(nombre_str: str) -> str | None:
     if not isinstance(nombre_str, str):
         return None
-    nombre_str_test = nombre_str.strip()
-    if not re.match(r"^[\d.,\s]*[kKm]?$", nombre_str_test, re.IGNORECASE):
-        logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_test}' ne correspond pas au format attendu.")
+    # Supprimer les espaces avant toute autre vérification pour gérer "2 500" -> "2500"
+    nombre_str_test = nombre_str.replace(" ", "").strip()
+
+    # Regex pour valider le format général (chiffres, points, virgules, k/K, m/M)
+    # Permet les points et virgules comme séparateurs de milliers ou décimaux avant k/M
+    if not re.match(r"^[\d.,]*[kKm]?$", nombre_str_test, re.IGNORECASE):
+        logger.debug(f"normaliser_nombre_followers: 	'{nombre_str}' (nettoyé en '{nombre_str_test}') ne correspond pas au format attendu après suppression des espaces.")
         return None
 
-    nombre_str_clean = nombre_str_test.lower().replace(" ", "").replace(".", "").replace(",", "")
+    nombre_str_clean = nombre_str_test.lower()
     valeur = None
+
     try:
         if "k" in nombre_str_clean:
-            if not re.match(r"^\d+k$", nombre_str_clean):
-                logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour 	'{nombre_str_clean}'")
+            # Supprimer les points et virgules avant de traiter le 'k'
+            # Exemple: "1.2k" -> "12k", "1,2k" -> "12k"
+            # Puis "12k" -> 1200. "1k" -> 1000
+            num_part = nombre_str_clean.replace("k", "").replace(",", ".") # Unifier les séparateurs décimaux en point
+            if not re.match(r"^\d*\.?\d+$", num_part): # Doit être un nombre valide avant 'k'
+                logger.debug(f"normaliser_nombre_followers: Format 'k' invalide pour '{nombre_str_clean}' (partie numérique: '{num_part}')")
                 return None
-            valeur = str(int(float(nombre_str_clean.replace("k", "")) * 1000))
+            valeur = str(int(float(num_part) * 1000))
         elif "m" in nombre_str_clean:
-            if not re.match(r"^\d+m$", nombre_str_clean):
-                logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour 	'{nombre_str_clean}'")
+            # Similaire à 'k'
+            num_part = nombre_str_clean.replace("m", "").replace(",", ".")
+            if not re.match(r"^\d*\.?\d+$", num_part):
+                logger.debug(f"normaliser_nombre_followers: Format 'm' invalide pour '{nombre_str_clean}' (partie numérique: '{num_part}')")
                 return None
-            valeur = str(int(float(nombre_str_clean.replace("m", "")) * 1000000))
+            valeur = str(int(float(num_part) * 1000000))
         else:
-            if not nombre_str_clean.isdigit():
-                logger.debug(f"normaliser_nombre_followers: 	'{nombre_str_clean}' n_est pas un digit après nettoyage.")
+            # Si pas de k/m, supprimer tous les non-chiffres (points et virgules utilisés comme séparateurs de milliers)
+            # Exemple: "2.500" -> "2500", "2,500" -> "2500"
+            nombre_final_digits = re.sub(r"[^\d]", "", nombre_str_clean)
+            if not nombre_final_digits.isdigit():
+                logger.debug(f"normaliser_nombre_followers: '{nombre_final_digits}' (venant de '{nombre_str_clean}') n'est pas un digit après nettoyage final.")
                 return None
-            valeur = str(int(nombre_str_clean))
-    except ValueError:
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	'{nombre_str_clean}'")
+            valeur = str(int(nombre_final_digits))
+    except ValueError as e:
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de '{nombre_str_clean}' (original: '{nombre_str}'): {e}")
         return None
     return valeur
 
@@ -114,13 +133,13 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     if hasattr(annotation, 'description') and hasattr(annotation, 'bounding_poly') and hasattr(annotation.bounding_poly, 'vertices') and len(annotation.bounding_poly.vertices) >=4:
                         vertices = annotation.bounding_poly.vertices
                         avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
-                        logger.info(f"  - Ann {i+1}: 	'{annotation.description}' (avg_y: {avg_y_log})")
+                        logger.info(f"  - Ann {i+1}: '{annotation.description}' (avg_y: {avg_y_log})")
                     else:
                         logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i+1} malformée: {annotation}")
                 except Exception as e_log_ann:
                     logger.error(f"extraire_followers_spatial ({reseau_nom}): Erreur lors du logging de l_annotation initiale {i+1}: {e_log_ann}. Annotation: {annotation}")
 
-        for i, annotation in enumerate(text_annotations[1:]):
+        for i, annotation in enumerate(text_annotations[1:]): # Ignorer la première annotation (texte complet)
             try:
                 if not hasattr(annotation, 'description') or not hasattr(annotation, 'bounding_poly'):
                     logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} n_a pas les attributs requis (description/bounding_poly), ignorée. Contenu: {annotation}")
@@ -135,24 +154,24 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                 vertices = annotation.bounding_poly.vertices
                 avg_y = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
                 avg_x = (vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) / 4
-                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: 	'{text}' (avg_y={avg_y}, avg_x={avg_x})")
+                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: '{text}' (avg_y={avg_y}, avg_x={avg_x})")
 
                 if any(keyword.lower() in text for keyword in mots_cles_specifiques):
                     keyword_annotations_list.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	'{text}' à y={avg_y}, x={avg_x}")
+                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: '{text}' à y={avg_y}, x={avg_x}")
                 
                 if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
                     nombre_normalise_test = normaliser_nombre_followers(text)
                     if nombre_normalise_test:
-                        if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
+                        if not re.fullmatch(r"\d{1,2}:\d{2}", text.replace(" ", "")):
                             number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: 	'{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
+                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: '{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
                         else:
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	'{text}' ignoré (format heure).")
+                            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre '{text}' ignoré (format heure).")
                     else:
-                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): 	'{text}' non normalisable en nombre.")
+                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): '{text}' non normalisable en nombre.")
                 else:
-                    logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	'{text}' ne semble pas être un nombre (basé sur regex), ignorée pour la normalisation.")
+                    logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation '{text}' ne semble pas être un nombre (basé sur regex), ignorée pour la normalisation.")
             except Exception as e_loop_ann:
                 logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR INATTENDUE lors du traitement de l_annotation {i}: {e_loop_ann}")
                 logger.error(f"extraire_followers_spatial ({reseau_nom}): Annotation problématique: {annotation}")
@@ -167,12 +186,9 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
         if not keyword_annotations_list:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
-            # Fallback simple: si 3 nombres sont alignés horizontalement, prendre celui du milieu
             if len(number_annotations_list) >= 3:
-                # Trier par X pour trouver les 3 nombres principaux (Suivis, Followers, J'aime/Posts)
                 number_annotations_list.sort(key=lambda ann: ann['avg_x'])
                 logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations_list]}")
-                # Vérifier si les 3 premiers sont à peu près sur la même ligne Y
                 if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
                     abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
                     logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]['normalized']}")
@@ -189,53 +205,70 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé.")
         for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Analyse pour mot-clé: 	'{kw_ann['text']}' à y={kw_ann['avg_y']}")
+            logger.info(f"  - Analyse pour mot-clé: '{kw_ann['text']}' à y={kw_ann['avg_y']:.2f}, x={kw_ann['avg_x']:.2f}")
             for num_ann in number_annotations_list:
-                # Le nombre doit être en dessous ou très proche en Y, et aligné en X
-                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] # Positif si le nombre est en dessous
-                x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
-                
-                logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
+                logger.debug(f"    - Comparaison avec nombre: '{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']:.2f}, x={num_ann['avg_x']:.2f}")
 
-                # Critères: nombre en dessous du mot-clé (y_diff > -10, tolérance pour léger décalage au-dessus)
-                # et assez proche horizontalement (x_diff < 100, ajustable)
-                if y_diff > -25 and y_diff < 100 and x_diff < 150: 
-                    distance = (y_diff**2 + x_diff**2)**0.5 # Simple distance euclidienne
-                    logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
-                    if distance < min_distance:
-                        try:
-                            # Pour Instagram/Twitter, le nombre de followers est souvent le plus grand des 3 (Suivis, Followers, Posts)
-                            # ou celui associé directement au mot-clé "followers" ou "abonnés"
-                            # On peut être moins strict sur la valeur minimale que pour TikTok
+                if reseau_nom in ["twitter", "threads"]:
+                    y_diff_abs = abs(num_ann['avg_y'] - kw_ann['avg_y'])
+                    is_to_left = num_ann['avg_x'] < kw_ann['avg_x']
+                    logger.debug(f"      Twitter/Threads: y_diff_abs={y_diff_abs:.2f}, is_to_left={is_to_left}")
+
+                    if y_diff_abs < 30 and is_to_left: 
+                        horizontal_distance = kw_ann['avg_x'] - num_ann['avg_x']
+                        logger.debug(f"        Candidat potentiel (Twitter/Threads). horizontal_distance: {horizontal_distance:.2f}")
+                        if 0 < horizontal_distance < 200: 
+                            if horizontal_distance < min_distance:
+                                min_distance = horizontal_distance
+                                best_candidate = num_ann['normalized']
+                                logger.info(f"        NOUVEAU MEILLEUR CANDIDAT (Twitter/Threads pour '{kw_ann['text']}'): {best_candidate} (h_dist: {min_distance:.2f})")
+                            else:
+                                logger.debug(f"        Distance horizontale {horizontal_distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
+                        else:
+                            logger.debug(f"        Distance horizontale {horizontal_distance:.2f} non comprise entre 0 et 200.")
+                    else:
+                        logger.debug(f"        Critères de position (Twitter/Threads: y_diff_abs < 30 ET is_to_left) non remplis.")
+                else: 
+                    y_diff = num_ann['avg_y'] - kw_ann['avg_y'] 
+                    x_diff_abs = abs(kw_ann['avg_x'] - num_ann['avg_x'])
+                    logger.debug(f"      Autres réseaux: y_diff={y_diff:.2f}, x_diff_abs={x_diff_abs:.2f}")
+                    if -25 < y_diff < 100 and x_diff_abs < 150: 
+                        distance = (y_diff**2 + x_diff_abs**2)**0.5
+                        logger.debug(f"        Candidat potentiel (Autres). Distance: {distance:.2f}")
+                        if distance < min_distance:
                             min_distance = distance
                             best_candidate = num_ann['normalized']
-                            logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour '{kw_ann['text']}'): {best_candidate} (distance: {min_distance:.2f})")
-                        except ValueError:
-                            logger.warning(f"      Impossible de convertir 	'{num_ann['normalized']}' en entier pour la comparaison.")
+                            logger.info(f"        NOUVEAU MEILLEUR CANDIDAT (Autres pour '{kw_ann['text']}'): {best_candidate} (dist: {min_distance:.2f})")
+                        else:
+                            logger.debug(f"        Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
                     else:
-                        logger.debug(f"      Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
-                else:
-                    logger.debug(f"      Critères de position (y_diff > -25 ET y_diff < 100 ET x_diff < 150) non remplis.")
+                        logger.debug(f"        Critères de position (Autres: -25 < y_diff < 100 ET x_diff_abs < 150) non remplis.")
         
         if best_candidate:
             logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de followers final extrait: {best_candidate}")
             return best_candidate
         else:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
-            # Fallback final: si des nombres ont été trouvés mais aucun mot-clé n_a aidé, prendre le plus grand nombre détecté
             if number_annotations_list:
-                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na['text'] for na in number_annotations_list]}")
-                if number_annotations_list and number_annotations_list[0]['normalized']:
-                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]['normalized']}")
-                     return number_annotations_list[0]['normalized']
+                try:
+                    valid_numbers = [int(na['normalized']) for na in number_annotations_list if na['normalized'] and na['normalized'].isdigit() and int(na['normalized']) >=0]
+                    if valid_numbers:
+                        valid_numbers.sort(reverse=True)
+                        logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres valides triés par valeur: {valid_numbers}")
+                        best_fallback_candidate = str(valid_numbers[0])
+                        logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre valide: {best_fallback_candidate}")
+                        return best_fallback_candidate
+                    else:
+                        logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Aucun nombre valide (après normalisation et filtrage) à retourner.")
+                except Exception as e_fallback_sort:
+                     logger.error(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Erreur lors du tri/sélection du fallback: {e_fallback_sort}")
             logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Aucun nombre à retourner.")
             return None
 
     except Exception as e_global_spatial:
         logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}")
-        logger.error(traceback.format_exc()) # Log du traceback complet
-        return None # Retourne None pour ne pas planter handle_photo
+        logger.error(traceback.format_exc()) 
+        return None
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("--- Entrée dans handle_photo ---")
