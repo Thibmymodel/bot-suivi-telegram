@@ -102,29 +102,139 @@ def normaliser_nombre_followers(nombre_str: str) -> str | None:
                 return None
             valeur = str(int(nombre_final_digits))
     except ValueError as e:
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	\"{nombre_str_clean}\" (original: 	\"{nombre_str}\"): {e}")
-        return None
-    return valeur
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	\"{nombre_str_clean}\" (original: 	\"{nombre_str}\def _fusionner_annotations_numeriques_adjacentes(annotations: list, max_x_diff: int = 20, max_y_diff: int = 10) -> list:
+    if not annotations:
+        return []
+
+    # Trier par y puis par x pour faciliter la détection d_adjacence
+    # On utilise les coordonnées du premier vertex pour le tri, ou avg_x/avg_y si disponibles
+    def get_sort_key(ann):
+        if hasattr(ann.get("annotation"), "bounding_poly") and ann["annotation"].bounding_poly.vertices:
+            return (ann["annotation"].bounding_poly.vertices[0].y, ann["annotation"].bounding_poly.vertices[0].x)
+        return (ann.get("avg_y", float("inf")), ann.get("avg_x", float("inf")))
+
+    annotations.sort(key=get_sort_key)
+
+    fusionnees = []
+    utilise_indices = [False] * len(annotations)
+
+    for i in range(len(annotations)):
+        if utilise_indices[i]:
+            continue
+
+        ann_courante = annotations[i]
+        texte_fusionne = ann_courante["text"]
+        # Utiliser les coordonnées des vertices pour une meilleure précision
+        v_courant = ann_courante["annotation"].bounding_poly.vertices
+        
+        # Coordonnées initiales pour l_annotation fusionnée
+        min_x = min(v.x for v in v_courant)
+        max_x = max(v.x for v in v_courant)
+        min_y = min(v.y for v in v_courant)
+        max_y = max(v.y for v in v_courant)
+
+        # Tentative de fusion avec les annotations suivantes
+        for j in range(i + 1, len(annotations)):
+            if utilise_indices[j]:
+                continue
+            
+            ann_suivante = annotations[j]
+            v_suivant = ann_suivante["annotation"].bounding_poly.vertices
+
+            # Calcul de la proximité : le coin supérieur droit de ann_courante (v_courant[1])
+            # doit être proche du coin supérieur gauche de ann_suivante (v_suivant[0])
+            # ou le coin inférieur droit de ann_courante (v_courant[2]) proche du coin inférieur gauche de ann_suivante (v_suivant[3])
+            # On simplifie en vérifiant si le bord droit de l_un est proche du bord gauche de l_autre
+            # et s_ils sont sur la même ligne (différence Y faible entre leurs centres ou leurs bords)
+            
+            # Centre Y approximatif de l_annotation courante et suivante
+            centre_y_courant = (min_y + max_y) / 2
+            centre_y_suivant = (min(v.y for v in v_suivant) + max(v.y for v in v_suivant)) / 2
+            
+            # Bord droit de l_ann_courante et bord gauche de l_ann_suivante
+            bord_droit_courant = max_x
+            bord_gauche_suivant = min(v.x for v in v_suivant)
+
+            diff_y_centres = abs(centre_y_courant - centre_y_suivant)
+            diff_x_bords = bord_gauche_suivant - bord_droit_courant
+
+            # Condition de fusion: sur la même ligne et horizontalement proche et successif
+            if diff_y_centres < max_y_diff and diff_x_bords >= -5 and diff_x_bords < max_x_diff: # diff_x_bords >= -5 pour tolérer léger chevauchement
+                texte_fusionne += ann_suivante["text"] # Concaténation simple, la normalisation gérera les espaces
+                utilise_indices[j] = True
+                # Mettre à jour les coordonnées englobantes
+                min_x = min(min_x, min(v.x for v in v_suivant))
+                max_x = max(max_x, max(v.x for v in v_suivant))
+                min_y = min(min_y, min(v.y for v in v_suivant))
+                max_y = max(max_y, max(v.y for v in v_suivant))
+            # Si on ne peut pas fusionner avec cette annotation, on ne regarde pas plus loin sur cette ligne pour ann_courante
+            # car elles sont triées par X. Une annotation plus loin ne sera pas adjacente.
+            # (Ceci est une simplification, une vraie fusion multi-blocs serait plus complexe)
+            # Pour l_instant, on se contente de fusions par paires ou petits groupes successifs.
+            # Si une fusion a eu lieu, on continue de chercher à fusionner avec la suivante pour la *nouvelle* entité fusionnée.
+            # Si pas de fusion, on arrête pour ann_courante et on passe à la suivante dans la boucle externe.
+            elif diff_y_centres < max_y_diff: # Sur la même ligne mais trop loin en X
+                 break # Arrêter de chercher à fusionner pour ann_courante
+            # Si pas sur la même ligne, on arrête aussi (car trié par Y d_abord)
+            # elif ann_suivante["annotation"].bounding_poly.vertices[0].y > ann_courante["annotation"].bounding_poly.vertices[0].y + max_y_diff * 2:
+            #     break
+
+        # Créer la nouvelle annotation (potentiellement fusionnée)
+        # Recalculer avg_x et avg_y pour la nouvelle annotation fusionnée
+        nouvel_avg_x = (min_x + max_x) / 2
+        nouvel_avg_y = (min_y + max_y) / 2
+        
+        # Créer un mock d_annotation pour la bounding_poly fusionnée
+        class MockVertex: pass
+        class MockBoundingPoly: pass
+        class MockAnnotation: pass
+
+        v1, v2, v3, v4 = MockVertex(), MockVertex(), MockVertex(), MockVertex()
+        v1.x, v1.y = min_x, min_y
+        v2.x, v2.y = max_x, min_y
+        v3.x, v3.y = max_x, max_y
+        v4.x, v4.y = min_x, max_y
+        
+        bp = MockBoundingPoly()
+        bp.vertices = [v1, v2, v3, v4]
+        
+        ann_fusionnee_obj = MockAnnotation()
+        ann_fusionnee_obj.description = texte_fusionne # Le texte brut fusionné
+        ann_fusionnee_obj.bounding_poly = bp
+
+        nombre_normalise_final = normaliser_nombre_followers(texte_fusionne)
+        if nombre_normalise_final:
+            fusionnees.append({
+                "text": texte_fusionne, 
+                "normalized": nombre_normalise_final, 
+                "avg_y": nouvel_avg_y, 
+                "avg_x": nouvel_avg_x, 
+                "annotation": ann_fusionnee_obj # Garder la structure de l_annotation
+            })
+        utilise_indices[i] = True # Marquer l_originale comme utilisée
+        
+    return fusionnees
 
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
     try:
         logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Début de l_extraction spatiale ---")
         keyword_annotations_list = []
-        number_annotations_list = []
+        raw_number_annotations_list = [] # Pour stocker les annotations numériques brutes avant fusion
 
         if not text_annotations:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucune annotation de texte fournie.")
             return None
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre total d_annotations reçues: {len(text_annotations)}")
+        # ... (logging des premières annotations reste le même)
         if len(text_annotations) > 1:
             logger.info(f"extraire_followers_spatial ({reseau_nom}): Premières annotations (description et position Y moyenne):")
             for i, annotation in enumerate(text_annotations[1:6]): 
                 try:
-                    if hasattr(annotation, 'description') and hasattr(annotation, 'bounding_poly') and hasattr(annotation.bounding_poly, 'vertices') and len(annotation.bounding_poly.vertices) >=4:
+                    if hasattr(annotation, "description") and hasattr(annotation, "bounding_poly") and hasattr(annotation.bounding_poly, "vertices") and len(annotation.bounding_poly.vertices) >=4:
                         vertices = annotation.bounding_poly.vertices
                         avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
-                        logger.info(f"  - Ann {i+1}: 	'{annotation.description}' (avg_y: {avg_y_log})")
+                        logger.info(f"  - Ann {i+1}: 	L_annotation 	\"{annotation.description}\" (avg_y: {avg_y_log})")
                     else:
                         logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i+1} malformée: {annotation}")
                 except Exception as e_log_ann:
@@ -132,61 +242,76 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
         for i, annotation in enumerate(text_annotations[1:]):
             try:
-                if not hasattr(annotation, 'description') or not hasattr(annotation, 'bounding_poly'):
+                if not hasattr(annotation, "description") or not hasattr(annotation, "bounding_poly"):
                     logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} n_a pas les attributs requis (description/bounding_poly), ignorée. Contenu: {annotation}")
                     continue
 
-                text = annotation.description.lower().strip()
+                text = annotation.description.strip() # Ne pas mettre en lower() ici pour la fusion
                 
-                if not hasattr(annotation.bounding_poly, 'vertices') or len(annotation.bounding_poly.vertices) < 4:
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} ('{text}') n_a pas de bounding_poly.vertices valides, ignorée.")
+                if not hasattr(annotation.bounding_poly, "vertices") or len(annotation.bounding_poly.vertices) < 4:
+                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} (	L_annotation 	\"{text}\") n_a pas de bounding_poly.vertices valides, ignorée.")
                     continue
                     
                 vertices = annotation.bounding_poly.vertices
                 avg_y = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
                 avg_x = (vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) / 4
-                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: 	'{text}' (avg_y={avg_y}, avg_x={avg_x})")
+                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: 	L_annotation 	\"{text}\" (avg_y={avg_y}, avg_x={avg_x})")
 
-                if any(keyword.lower() in text for keyword in mots_cles_specifiques):
-                    keyword_annotations_list.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	'{text}' à y={avg_y}, x={avg_x}")
+                if any(keyword.lower() in text.lower() for keyword in mots_cles_specifiques):
+                    keyword_annotations_list.append({"text": text.lower(), "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
+                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	L_annotation 	\"{text.lower()}\" à y={avg_y}, x={avg_x}")
                 
+                # Vérifier si le texte est potentiellement un nombre ou une partie de nombre (ne pas normaliser ici)
+                # Un simple chiffre, ou un nombre avec des points/virgules/espaces, ou k/m
+                # La regex est plus permissive ici pour attraper les morceaux
                 if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
-                    nombre_normalise_test = normaliser_nombre_followers(text)
-                    if nombre_normalise_test:
-                        if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
-                            number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: 	'{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
-                        else:
-                            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	'{text}' ignoré (format heure).")
+                    if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
+                        raw_number_annotations_list.append({
+                            "text": text, # Garder le texte original pour la fusion
+                            "avg_y": avg_y, 
+                            "avg_x": avg_x, 
+                            "annotation": annotation
+                        })
+                        logger.info(f"extraire_followers_spatial ({reseau_nom}): FRAGMENT NUMÉRIQUE BRUT TROUVÉ: 	L_annotation 	\"{text}\" à y={avg_y}, x={avg_x}")
                     else:
-                        logger.debug(f"extraire_followers_spatial ({reseau_nom}): 	'{text}' non normalisable en nombre.")
-                else:
-                    logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	'{text}' ne semble pas être un nombre (basé sur regex), ignorée pour la normalisation.")
+                        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	L_annotation 	\"{text}\" ignoré (format heure).")
+                # else:
+                    # logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	L_annotation 	\"{text}\" ne semble pas être un fragment numérique (basé sur regex), ignorée pour la liste brute.")
+
             except Exception as e_loop_ann:
                 logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR INATTENDUE lors du traitement de l_annotation {i}: {e_loop_ann}")
                 logger.error(f"extraire_followers_spatial ({reseau_nom}): Annotation problématique: {annotation}")
                 logger.error(traceback.format_exc())
                 continue 
+        
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations brutes.")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de fragments numériques bruts trouvés: {len(raw_number_annotations_list)}")
 
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations.")
+        # Étape de fusion des annotations numériques adjacentes
+        if raw_number_annotations_list:
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Début de la fusion des fragments numériques adjacents.")
+            number_annotations_list = _fusionner_annotations_numeriques_adjacentes(raw_number_annotations_list)
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la fusion. Nombre d_annotations numériques après fusion: {len(number_annotations_list)}")
+        else:
+            number_annotations_list = []
+
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés: {len(number_annotations_list)}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres (après fusion et normalisation) trouvés: {len(number_annotations_list)}")
         for idx, na in enumerate(number_annotations_list):
-            logger.info(f"  - Nombre {idx}: {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}")
+            logger.info(f"  - Nombre {idx}: 	L_annotation 	\"{na["text"]}\" (normalisé: {na["normalized"]}) à y={na["avg_y"]}")
+
+        # ... (la suite de la fonction: fallback si pas de mot-clé, recherche du meilleur candidat, etc. reste la même)
+        # ... elle utilisera `number_annotations_list` qui contient maintenant les nombres potentiellement fusionnés et normalisés.
 
         if not keyword_annotations_list:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
-            # Fallback simple: si 3 nombres sont alignés horizontalement, prendre celui du milieu
             if len(number_annotations_list) >= 3:
-                # Trier par X pour trouver les 3 nombres principaux (Suivis, Followers, J'aime/Posts)
-                number_annotations_list.sort(key=lambda ann: ann['avg_x'])
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations_list]}")
-                # Vérifier si les 3 premiers sont à peu près sur la même ligne Y
-                if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
-                    abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]['normalized']}")
-                    return number_annotations_list[1]['normalized']
+                number_annotations_list.sort(key=lambda ann: ann["avg_x"])
+                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na["text"] for na in number_annotations_list]}")
+                if (abs(number_annotations_list[0]["avg_y"] - number_annotations_list[1]["avg_y"]) < 30 and 
+                    abs(number_annotations_list[1]["avg_y"] - number_annotations_list[2]["avg_y"]) < 30):
+                    logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]["normalized"]}")
+                    return number_annotations_list[1]["normalized"]
                 else:
                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Les 3 premiers nombres ne sont pas alignés en Y.")
             else:
@@ -195,33 +320,27 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             return None
 
         best_candidate = None
-        min_distance = float('inf')
+        min_distance = float("inf")
 
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé.")
         for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Analyse pour mot-clé: 	'{kw_ann['text']}' à y={kw_ann['avg_y']}")
+            logger.info(f"  - Analyse pour mot-clé: 	L_annotation 	\"{kw_ann["text"]}\" à y={kw_ann["avg_y"]}")
             for num_ann in number_annotations_list:
-                # Le nombre doit être en dessous ou très proche en Y, et aligné en X
-                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] # Positif si le nombre est en dessous
-                x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
+                y_diff = num_ann["avg_y"] - kw_ann["avg_y"]
+                x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
                 
-                logger.debug(f"    - Comparaison avec nombre: 	'{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
+                logger.debug(f"    - Comparaison avec nombre: 	L_annotation 	\"{num_ann["text"]}\" (norm: {num_ann["normalized"]}) à y={num_ann["avg_y"]}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
 
-                # Critères: nombre en dessous du mot-clé (y_diff > -10, tolérance pour léger décalage au-dessus)
-                # et assez proche horizontalement (x_diff < 100, ajustable)
                 if y_diff > -25 and y_diff < 100 and x_diff < 150: 
-                    distance = (y_diff**2 + x_diff**2)**0.5 # Simple distance euclidienne
+                    distance = (y_diff**2 + x_diff**2)**0.5
                     logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
                     if distance < min_distance:
                         try:
-                            # Pour Instagram/Twitter, le nombre de followers est souvent le plus grand des 3 (Suivis, Followers, Posts)
-                            # ou celui associé directement au mot-clé "followers" ou "abonnés"
-                            # On peut être moins strict sur la valeur minimale que pour TikTok
                             min_distance = distance
-                            best_candidate = num_ann['normalized']
-                            logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour '{kw_ann['text']}'): {best_candidate} (distance: {min_distance:.2f})")
+                            best_candidate = num_ann["normalized"]
+                            logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour 	L_annotation 	\"{kw_ann["text"]}\"): {best_candidate} (distance: {min_distance:.2f})")
                         except ValueError:
-                            logger.warning(f"      Impossible de convertir 	'{num_ann['normalized']}' en entier pour la comparaison.")
+                            logger.warning(f"      Impossible de convertir 	L_annotation 	\"{num_ann["normalized"]}\" en entier pour la comparaison.")
                     else:
                         logger.debug(f"      Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
                 else:
@@ -232,25 +351,24 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
             return best_candidate
         else:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
-            # Fallback final: si des nombres ont été trouvés mais aucun mot-clé n_a aidé, prendre le plus grand nombre détecté
             if number_annotations_list:
                 number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na['text'] for na in number_annotations_list]}")
-                if number_annotations_list and number_annotations_list[0]['normalized']:
-                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]['normalized']}")
-                     return number_annotations_list[0]['normalized']
+                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na["text"] for na in number_annotations_list]}")
+                if number_annotations_list and number_annotations_list[0]["normalized"]:
+                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}")
+                     return number_annotations_list[0]["normalized"]
             logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Aucun nombre à retourner.")
             return None
 
     except Exception as e_global_spatial:
         logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}")
-        logger.error(traceback.format_exc()) # Log du traceback complet
-        return None # Retourne None pour ne pas planter handle_photo
+        logger.error(traceback.format_exc())
+        return None
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("--- Entrée dans handle_photo ---")
-    assistant = "INCONNU"
-    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    # ... (le reste de la fonction handle_photo est inchangé)
+ = datetime.datetime.now().strftime("%d/%m/%Y")
     message_status_general = None 
     donnees_extraites_ok = False
     reply_message_exists_for_error_handling = False
