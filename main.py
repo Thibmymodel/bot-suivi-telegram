@@ -68,529 +68,410 @@ def corriger_username(username: str, reseau: str) -> str:
 def normaliser_nombre_followers(nombre_str: str) -> str | None:
     if not isinstance(nombre_str, str):
         return None
-    # Étape 1: Supprimer les espaces pour gérer les cas comme "6 239" -> "6239"
     nombre_str_test = nombre_str.replace(" ", "").strip()
-
-    # Étape 2: Valider le format général après suppression des espaces (chiffres, points, virgules, k/K, m/M)
-    if not re.match(r"^[\d.,]*[kKm]?$", nombre_str_test, re.IGNORECASE):
-        logger.debug(f"normaliser_nombre_followers: 	L_entrée 	\"{nombre_str}\" (nettoyée en 	\"{nombre_str_test}\") ne correspond pas au format attendu.")
+    if not re.match(r"^[\d.,]*[kKmM]?$", nombre_str_test, re.IGNORECASE):
+        logger.debug(f"normaliser_nombre_followers: L_entrée 	\"{nombre_str}\" (nettoyée en 	\"{nombre_str_test}\") ne correspond pas au format attendu.")
         return None
-
     nombre_str_clean = nombre_str_test.lower()
     valeur = None
-
     try:
         if "k" in nombre_str_clean:
-            # Gérer les points/virgules comme séparateurs décimaux pour k (ex: "1.2k", "1,2k")
             num_part = nombre_str_clean.replace("k", "").replace(",", ".")
-            if not re.match(r"^\d*\.?\d+$", num_part): # Doit être un nombre valide avant k
+            if not re.match(r"^\d*\.?\d+$", num_part):
                 logger.debug(f"normaliser_nombre_followers: Format k invalide pour 	\"{nombre_str_clean}\" (partie numérique: 	\"{num_part}\")")
                 return None
             valeur = str(int(float(num_part) * 1000))
         elif "m" in nombre_str_clean:
-            # Gérer les points/virgules comme séparateurs décimaux pour m
             num_part = nombre_str_clean.replace("m", "").replace(",", ".")
             if not re.match(r"^\d*\.?\d+$", num_part):
                 logger.debug(f"normaliser_nombre_followers: Format m invalide pour 	\"{nombre_str_clean}\" (partie numérique: 	\"{num_part}\")")
                 return None
             valeur = str(int(float(num_part) * 1000000))
         else:
-            # Si pas de k/m, supprimer tous les non-chiffres (points et virgules utilisés comme séparateurs de milliers)
             nombre_final_digits = re.sub(r"[^\d]", "", nombre_str_clean)
             if not nombre_final_digits.isdigit():
                 logger.debug(f"normaliser_nombre_followers: 	\"{nombre_final_digits}\" (venant de 	\"{nombre_str_clean}\") n_est pas un digit après nettoyage final.")
                 return None
             valeur = str(int(nombre_final_digits))
     except ValueError as e:
-        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	\"{nombre_str_clean}\" (original: 	\"{nombre_str}\def _fusionner_annotations_numeriques_adjacentes(annotations: list, max_x_diff: int = 20, max_y_diff: int = 10) -> list:
-    if not annotations:
-        return []
+        logger.warning(f"normaliser_nombre_followers: ValueError lors de la conversion de 	\"{nombre_str_clean}\" (original: 	\"{nombre_str}\"): {e}")
+        return None
+    return valeur
 
-    # Trier par y puis par x pour faciliter la détection d_adjacence
-    # On utilise les coordonnées du premier vertex pour le tri, ou avg_x/avg_y si disponibles
-    def get_sort_key(ann):
-        if hasattr(ann.get("annotation"), "bounding_poly") and ann["annotation"].bounding_poly.vertices:
-            return (ann["annotation"].bounding_poly.vertices[0].y, ann["annotation"].bounding_poly.vertices[0].x)
-        return (ann.get("avg_y", float("inf")), ann.get("avg_x", float("inf")))
+def _fusionner_annotations_numeriques_adjacentes_instagram(number_annotations_list: list, reseau_nom: str) -> list:
+    if reseau_nom != "instagram":
+        return number_annotations_list
 
-    annotations.sort(key=get_sort_key)
+    logger.info(f"_fusionner_annotations_numeriques_adjacentes_instagram: Tentative de fusion pour {len(number_annotations_list)} annotations.")
 
-    fusionnees = []
-    utilise_indices = [False] * len(annotations)
+    fragments = []
+    others = []
+    for ann in number_annotations_list:
+        text = ann.get("text", "").strip()
+        # Est un fragment numérique pur s_il ne contient que des chiffres, espaces, points, virgules
+        # ET ne contient pas de ':' (heure), 'k', 'm', 's' (pour éviter de fusionner "10" avec "k followers")
+        if re.fullmatch(r"[\d\s.,]+", text) and not any(c in text.lower() for c in [":", "k", "m", "s"]):
+            fragments.append(ann)
+        else:
+            others.append(ann)
 
-    for i in range(len(annotations)):
-        if utilise_indices[i]:
+    if len(fragments) < 2:
+        logger.info("_fusionner_annotations_numeriques_adjacentes_instagram: Pas assez de fragments (<2) ou aucun fragment trouvé pour tenter une fusion.")
+        return number_annotations_list # Retourne la liste originale (fragments + others)
+
+    fragments.sort(key=lambda ann: (ann["avg_y"], ann["avg_x"]))
+    
+    merged_fragments_successfully = []
+    used_fragment_indices = [False] * len(fragments)
+
+    for i in range(len(fragments)):
+        if used_fragment_indices[i]:
             continue
 
-        ann_courante = annotations[i]
-        texte_fusionne = ann_courante["text"]
-        # Utiliser les coordonnées des vertices pour une meilleure précision
-        v_courant = ann_courante["annotation"].bounding_poly.vertices
-        
-        # Coordonnées initiales pour l_annotation fusionnée
-        min_x = min(v.x for v in v_courant)
-        max_x = max(v.x for v in v_courant)
-        min_y = min(v.y for v in v_courant)
-        max_y = max(v.y for v in v_courant)
+        current_group_anns = [fragments[i]]
+        current_group_texts = [fragments[i]["text"].strip()]
+        used_fragment_indices[i] = True # Marquer comme utilisé pour ce groupe potentiel
 
-        # Tentative de fusion avec les annotations suivantes
-        for j in range(i + 1, len(annotations)):
-            if utilise_indices[j]:
+        for j in range(i + 1, len(fragments)):
+            if used_fragment_indices[j]: # Ne devrait pas arriver si la logique est correcte
                 continue
-            
-            ann_suivante = annotations[j]
-            v_suivant = ann_suivante["annotation"].bounding_poly.vertices
 
-            # Calcul de la proximité : le coin supérieur droit de ann_courante (v_courant[1])
-            # doit être proche du coin supérieur gauche de ann_suivante (v_suivant[0])
-            # ou le coin inférieur droit de ann_courante (v_courant[2]) proche du coin inférieur gauche de ann_suivante (v_suivant[3])
-            # On simplifie en vérifiant si le bord droit de l_un est proche du bord gauche de l_autre
-            # et s_ils sont sur la même ligne (différence Y faible entre leurs centres ou leurs bords)
-            
-            # Centre Y approximatif de l_annotation courante et suivante
-            centre_y_courant = (min_y + max_y) / 2
-            centre_y_suivant = (min(v.y for v in v_suivant) + max(v.y for v in v_suivant)) / 2
-            
-            # Bord droit de l_ann_courante et bord gauche de l_ann_suivante
-            bord_droit_courant = max_x
-            bord_gauche_suivant = min(v.x for v in v_suivant)
+            last_ann_in_group = current_group_anns[-1]
+            next_ann = fragments[j]
 
-            diff_y_centres = abs(centre_y_courant - centre_y_suivant)
-            diff_x_bords = bord_gauche_suivant - bord_droit_courant
+            y_diff = abs(last_ann_in_group["avg_y"] - next_ann["avg_y"])
+            x_diff_centers = next_ann["avg_x"] - last_ann_in_group["avg_x"]
 
-            # Condition de fusion: sur la même ligne et horizontalement proche et successif
-            if diff_y_centres < max_y_diff and diff_x_bords >= -5 and diff_x_bords < max_x_diff: # diff_x_bords >= -5 pour tolérer léger chevauchement
-                texte_fusionne += ann_suivante["text"] # Concaténation simple, la normalisation gérera les espaces
-                utilise_indices[j] = True
-                # Mettre à jour les coordonnées englobantes
-                min_x = min(min_x, min(v.x for v in v_suivant))
-                max_x = max(max_x, max(v.x for v in v_suivant))
-                min_y = min(min_y, min(v.y for v in v_suivant))
-                max_y = max(max_y, max(v.y for v in v_suivant))
-            # Si on ne peut pas fusionner avec cette annotation, on ne regarde pas plus loin sur cette ligne pour ann_courante
-            # car elles sont triées par X. Une annotation plus loin ne sera pas adjacente.
-            # (Ceci est une simplification, une vraie fusion multi-blocs serait plus complexe)
-            # Pour l_instant, on se contente de fusions par paires ou petits groupes successifs.
-            # Si une fusion a eu lieu, on continue de chercher à fusionner avec la suivante pour la *nouvelle* entité fusionnée.
-            # Si pas de fusion, on arrête pour ann_courante et on passe à la suivante dans la boucle externe.
-            elif diff_y_centres < max_y_diff: # Sur la même ligne mais trop loin en X
-                 break # Arrêter de chercher à fusionner pour ann_courante
-            # Si pas sur la même ligne, on arrête aussi (car trié par Y d_abord)
-            # elif ann_suivante["annotation"].bounding_poly.vertices[0].y > ann_courante["annotation"].bounding_poly.vertices[0].y + max_y_diff * 2:
-            #     break
+            Y_LINE_THRESHOLD = 20  
+            X_SPACE_THRESHOLD_MIN = 1 # Doit être à droite
+            X_SPACE_THRESHOLD_MAX = 85 # Augmenté pour plus de flexibilité
 
-        # Créer la nouvelle annotation (potentiellement fusionnée)
-        # Recalculer avg_x et avg_y pour la nouvelle annotation fusionnée
-        nouvel_avg_x = (min_x + max_x) / 2
-        nouvel_avg_y = (min_y + max_y) / 2
+            if y_diff < Y_LINE_THRESHOLD and X_SPACE_THRESHOLD_MIN < x_diff_centers < X_SPACE_THRESHOLD_MAX:
+                current_group_texts.append(next_ann["text"].strip())
+                current_group_anns.append(next_ann)
+                used_fragment_indices[j] = True # Marquer comme utilisé dans ce groupe
+            elif x_diff_centers >= X_SPACE_THRESHOLD_MAX or x_diff_centers <= 0: # Trop loin ou à gauche/superposé
+                # Remettre used_fragment_indices[j] à False s_il avait été mis à True par erreur ? Non, car on break.
+                break # Arrêter d_étendre ce groupe si le suivant est trop loin ou mal placé
         
-        # Créer un mock d_annotation pour la bounding_poly fusionnée
-        class MockVertex: pass
-        class MockBoundingPoly: pass
-        class MockAnnotation: pass
+        merged_text_with_spaces = " ".join(current_group_texts)
+        normalized_value = normaliser_nombre_followers(merged_text_with_spaces)
 
-        v1, v2, v3, v4 = MockVertex(), MockVertex(), MockVertex(), MockVertex()
-        v1.x, v1.y = min_x, min_y
-        v2.x, v2.y = max_x, min_y
-        v3.x, v3.y = max_x, max_y
-        v4.x, v4.y = min_x, max_y
-        
-        bp = MockBoundingPoly()
-        bp.vertices = [v1, v2, v3, v4]
-        
-        ann_fusionnee_obj = MockAnnotation()
-        ann_fusionnee_obj.description = texte_fusionne # Le texte brut fusionné
-        ann_fusionnee_obj.bounding_poly = bp
-
-        nombre_normalise_final = normaliser_nombre_followers(texte_fusionne)
-        if nombre_normalise_final:
-            fusionnees.append({
-                "text": texte_fusionne, 
-                "normalized": nombre_normalise_final, 
-                "avg_y": nouvel_avg_y, 
-                "avg_x": nouvel_avg_x, 
-                "annotation": ann_fusionnee_obj # Garder la structure de l_annotation
+        if normalized_value:
+            base_ann = current_group_anns[0]
+            merged_fragments_successfully.append({
+                "text": merged_text_with_spaces, 
+                "normalized": normalized_value,
+                "avg_y": base_ann["avg_y"],
+                "avg_x": base_ann["avg_x"],
+                "annotation": base_ann["annotation"]
             })
-        utilise_indices[i] = True # Marquer l_originale comme utilisée
-        
-    return fusionnees
+            logger.info(f"_fusionner_annotations_numeriques_adjacentes_instagram: Fusionné {current_group_texts} -> '{merged_text_with_spaces}' (normalisé: {normalized_value})")
+        else: # La fusion n_a pas donné un nombre valide, remettre les fragments originaux du groupe actuel
+            for k_idx, ann_in_failed_group in enumerate(current_group_anns):
+                 # Remettre l_index à False pour qu_il soit traité individuellement s_il n_était pas le premier du groupe
+                original_fragment_index_in_fragments_list = fragments.index(ann_in_failed_group) # Peut être coûteux
+                # Pour éviter la complexité de retrouver l_index, on les ajoute simplement
+                # s_ils sont normalisables seuls.
+                original_norm = normaliser_nombre_followers(ann_in_failed_group["text"])
+                if original_norm:
+                    merged_fragments_successfully.append({ 
+                        "text": ann_in_failed_group["text"],
+                        "normalized": original_norm,
+                        "avg_y": ann_in_failed_group["avg_y"],
+                        "avg_x": ann_in_failed_group["avg_x"],
+                        "annotation": ann_in_failed_group["annotation"]
+                    })
+                # Et marquer l_index comme non-utilisé pour qu_il puisse être repris s_il n_est pas le premier
+                if k_idx > 0 : # Si ce n_est pas le premier du groupe qui a échoué
+                    # Ceci est compliqué. Plus simple: si la fusion échoue, on ne fait rien ici, et les used_fragment_indices
+                    # pour les éléments après i (ceux de current_group_anns) seront toujours False s_ils n_ont pas été traités.
+                    # La logique actuelle est : si on commence un groupe avec fragments[i], on le marque used.
+                    # Si la fusion échoue, fragments[i] (et les autres du groupe) doivent être remis. C_est ce que fait la boucle externe.
+                    pass
+    
+    # Ajouter les fragments qui n_ont PAS été utilisés dans une fusion réussie
+    # (ceux pour lesquels used_fragment_indices est resté False ou ceux dont le groupe a échoué à la normalisation)
+    # C_est déjà un peu géré ci-dessus par la remise des fragments en cas d_échec de normalisation du groupe.
+    # Pour être sûr, on parcourt tous les fragments initiaux.
+    final_processed_fragments = []
+    temp_used_in_success = [False] * len(fragments)
+
+    for merged_ann in merged_fragments_successfully:
+        # Si merged_ann vient d_une fusion réelle (plus d_un texte original)
+        original_texts_in_merge = merged_ann["text"].split(" ")
+        if len(original_texts_in_merge) > 1 and merged_ann["text"] != merged_ann["annotation"].description.strip(): # Heuristique pour détecter une vraie fusion
+            # Trouver les fragments originaux correspondants et les marquer
+            # C_est trop complexe ici. On se fie à ce que merged_fragments_successfully contienne le bon set.
+            pass
+        final_processed_fragments.append(merged_ann)
+    
+    # Quels fragments n_ont pas été inclus dans `merged_fragments_successfully` ?
+    # On reconstruit la liste des fragments traités.
+    # `merged_fragments_successfully` contient soit des groupes fusionnés, soit des fragments individuels (si leur groupe a échoué à la normalisation).
+    # On doit s_assurer de ne pas avoir de doublons et que tous les fragments originaux y sont représentés une fois.
+
+    # Simplification: `merged_fragments_successfully` est la liste des fragments après tentative de fusion.
+    # Elle devrait contenir tous les éléments de `fragments`, soit fusionnés, soit tels quels.
+    # On la combine avec `others`.
+
+    final_number_annotations = merged_fragments_successfully + others
+    
+    if len(final_number_annotations) != len(number_annotations_list):
+        logger.info(f"_fusionner_annotations_numeriques_adjacentes_instagram: Taille de la liste modifiée. Avant: {len(number_annotations_list)}, Après: {len(final_number_annotations)}")
+    else:
+        logger.info("_fusionner_annotations_numeriques_adjacentes_instagram: Taille de la liste inchangée après tentative de fusion.")
+
+    return final_number_annotations
 
 def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_nom="inconnu") -> str | None:
     try:
         logger.info(f"extraire_followers_spatial ({reseau_nom}): --- Début de l_extraction spatiale ---")
         keyword_annotations_list = []
-        raw_number_annotations_list = [] # Pour stocker les annotations numériques brutes avant fusion
+        number_annotations_list = []
 
         if not text_annotations:
             logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucune annotation de texte fournie.")
             return None
         
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre total d_annotations reçues: {len(text_annotations)}")
-        # ... (logging des premières annotations reste le même)
-        if len(text_annotations) > 1:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Premières annotations (description et position Y moyenne):")
-            for i, annotation in enumerate(text_annotations[1:6]): 
-                try:
-                    if hasattr(annotation, "description") and hasattr(annotation, "bounding_poly") and hasattr(annotation.bounding_poly, "vertices") and len(annotation.bounding_poly.vertices) >=4:
-                        vertices = annotation.bounding_poly.vertices
-                        avg_y_log = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
-                        logger.info(f"  - Ann {i+1}: 	L_annotation 	\"{annotation.description}\" (avg_y: {avg_y_log})")
-                    else:
-                        logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation initiale {i+1} malformée: {annotation}")
-                except Exception as e_log_ann:
-                    logger.error(f"extraire_followers_spatial ({reseau_nom}): Erreur lors du logging de l_annotation initiale {i+1}: {e_log_ann}. Annotation: {annotation}")
+        # ... (logging des premières annotations)
 
         for i, annotation in enumerate(text_annotations[1:]):
             try:
-                if not hasattr(annotation, "description") or not hasattr(annotation, "bounding_poly"):
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} n_a pas les attributs requis (description/bounding_poly), ignorée. Contenu: {annotation}")
+                if not hasattr(annotation, 'description') or not hasattr(annotation, 'bounding_poly'):
                     continue
-
-                text = annotation.description.strip() # Ne pas mettre en lower() ici pour la fusion
-                
-                if not hasattr(annotation.bounding_poly, "vertices") or len(annotation.bounding_poly.vertices) < 4:
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}): Annotation {i} (	L_annotation 	\"{text}\") n_a pas de bounding_poly.vertices valides, ignorée.")
+                text = annotation.description.lower().strip()
+                if not hasattr(annotation.bounding_poly, 'vertices') or len(annotation.bounding_poly.vertices) < 4:
                     continue
-                    
                 vertices = annotation.bounding_poly.vertices
                 avg_y = (vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) / 4
                 avg_x = (vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) / 4
-                logger.debug(f"extraire_followers_spatial ({reseau_nom}): Traitement annotation {i}: 	L_annotation 	\"{text}\" (avg_y={avg_y}, avg_x={avg_x})")
 
-                if any(keyword.lower() in text.lower() for keyword in mots_cles_specifiques):
-                    keyword_annotations_list.append({"text": text.lower(), "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: 	L_annotation 	\"{text.lower()}\" à y={avg_y}, x={avg_x}")
+                if any(keyword.lower() in text for keyword in mots_cles_specifiques):
+                    keyword_annotations_list.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
                 
-                # Vérifier si le texte est potentiellement un nombre ou une partie de nombre (ne pas normaliser ici)
-                # Un simple chiffre, ou un nombre avec des points/virgules/espaces, ou k/m
-                # La regex est plus permissive ici pour attraper les morceaux
-                if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
-                    if not re.fullmatch(r"\d{1,2}:\d{2}", text): # Exclure les heures
-                        raw_number_annotations_list.append({
-                            "text": text, # Garder le texte original pour la fusion
-                            "avg_y": avg_y, 
-                            "avg_x": avg_x, 
-                            "annotation": annotation
-                        })
-                        logger.info(f"extraire_followers_spatial ({reseau_nom}): FRAGMENT NUMÉRIQUE BRUT TROUVÉ: 	L_annotation 	\"{text}\" à y={avg_y}, x={avg_x}")
-                    else:
-                        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre 	L_annotation 	\"{text}\" ignoré (format heure).")
-                # else:
-                    # logger.debug(f"extraire_followers_spatial ({reseau_nom}): Annotation 	L_annotation 	\"{text}\" ne semble pas être un fragment numérique (basé sur regex), ignorée pour la liste brute.")
-
+                # Regex pour identifier les nombres potentiels (y compris avec k/m, espaces, points, virgules)
+                # Exclut les formats d_heure simples comme "10:30"
+                if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKmMsS]?$", text, re.IGNORECASE) and not re.fullmatch(r"\d{1,2}:\d{2}[\s\w]*", text, re.IGNORECASE):
+                    nombre_normalise_test = normaliser_nombre_followers(text)
+                    if nombre_normalise_test:
+                        number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
             except Exception as e_loop_ann:
                 logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR INATTENDUE lors du traitement de l_annotation {i}: {e_loop_ann}")
-                logger.error(f"extraire_followers_spatial ({reseau_nom}): Annotation problématique: {annotation}")
-                logger.error(traceback.format_exc())
                 continue 
-        
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations brutes.")
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de fragments numériques bruts trouvés: {len(raw_number_annotations_list)}")
 
-        # Étape de fusion des annotations numériques adjacentes
-        if raw_number_annotations_list:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Début de la fusion des fragments numériques adjacents.")
-            number_annotations_list = _fusionner_annotations_numeriques_adjacentes(raw_number_annotations_list)
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la fusion. Nombre d_annotations numériques après fusion: {len(number_annotations_list)}")
-        else:
-            number_annotations_list = []
-
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations.")
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres (après fusion et normalisation) trouvés: {len(number_annotations_list)}")
-        for idx, na in enumerate(number_annotations_list):
-            logger.info(f"  - Nombre {idx}: 	L_annotation 	\"{na["text"]}\" (normalisé: {na["normalized"]}) à y={na["avg_y"]}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés AVANT fusion: {len(number_annotations_list)}")
 
-        # ... (la suite de la fonction: fallback si pas de mot-clé, recherche du meilleur candidat, etc. reste la même)
-        # ... elle utilisera `number_annotations_list` qui contient maintenant les nombres potentiellement fusionnés et normalisés.
+        if reseau_nom == "instagram":
+            number_annotations_list = _fusionner_annotations_numeriques_adjacentes_instagram(number_annotations_list, reseau_nom)
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés APRES fusion: {len(number_annotations_list)}")
+
+        for idx, na in enumerate(number_annotations_list):
+            logger.info(f"  - Nombre {idx} (post-fusion): {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}")
 
         if not keyword_annotations_list:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback.")
             if len(number_annotations_list) >= 3:
-                number_annotations_list.sort(key=lambda ann: ann["avg_x"])
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na["text"] for na in number_annotations_list]}")
-                if (abs(number_annotations_list[0]["avg_y"] - number_annotations_list[1]["avg_y"]) < 30 and 
-                    abs(number_annotations_list[1]["avg_y"] - number_annotations_list[2]["avg_y"]) < 30):
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]["normalized"]}")
-                    return number_annotations_list[1]["normalized"]
-                else:
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Les 3 premiers nombres ne sont pas alignés en Y.")
-            else:
-                logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Pas assez de nombres ({len(number_annotations_list)}) pour le fallback des 3 nombres.")
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Conditions de fallback non remplies.")
+                number_annotations_list.sort(key=lambda ann: ann['avg_x'])
+                if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
+                    abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
+                    return number_annotations_list[1]['normalized']
             return None
 
         best_candidate = None
-        min_distance = float("inf")
+        min_distance = float('inf')
 
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé.")
         for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Analyse pour mot-clé: 	L_annotation 	\"{kw_ann["text"]}\" à y={kw_ann["avg_y"]}")
             for num_ann in number_annotations_list:
-                y_diff = num_ann["avg_y"] - kw_ann["avg_y"]
-                x_diff = abs(kw_ann["avg_x"] - num_ann["avg_x"])
-                
-                logger.debug(f"    - Comparaison avec nombre: 	L_annotation 	\"{num_ann["text"]}\" (norm: {num_ann["normalized"]}) à y={num_ann["avg_y"]}. y_diff={y_diff:.2f}, x_diff={x_diff:.2f}")
-
+                y_diff = num_ann['avg_y'] - kw_ann['avg_y'] 
+                x_diff = abs(kw_ann['avg_x'] - num_ann['avg_x'])
                 if y_diff > -25 and y_diff < 100 and x_diff < 150: 
                     distance = (y_diff**2 + x_diff**2)**0.5
-                    logger.debug(f"      Candidat potentiel. Distance: {distance:.2f}")
                     if distance < min_distance:
                         try:
                             min_distance = distance
-                            best_candidate = num_ann["normalized"]
-                            logger.info(f"      NOUVEAU MEILLEUR CANDIDAT (pour 	L_annotation 	\"{kw_ann["text"]}\"): {best_candidate} (distance: {min_distance:.2f})")
+                            best_candidate = num_ann['normalized']
                         except ValueError:
-                            logger.warning(f"      Impossible de convertir 	L_annotation 	\"{num_ann["normalized"]}\" en entier pour la comparaison.")
-                    else:
-                        logger.debug(f"      Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
-                else:
-                    logger.debug(f"      Critères de position (y_diff > -25 ET y_diff < 100 ET x_diff < 150) non remplis.")
+                            pass # Ignorer si la normalisation a échoué plus tôt
         
         if best_candidate:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de followers final extrait: {best_candidate}")
             return best_candidate
         else:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
+            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat sélectionné. Fallback sur le plus grand nombre.")
             if number_annotations_list:
-                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0")), reverse=True)
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres triés par valeur: {[na["text"] for na in number_annotations_list]}")
-                if number_annotations_list and number_annotations_list[0]["normalized"]:
-                     logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Sélection du plus grand nombre: {number_annotations_list[0]["normalized"]}")
-                     return number_annotations_list[0]["normalized"]
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Aucun nombre à retourner.")
+                number_annotations_list.sort(key=lambda x: int(x.get("normalized", "0") or "0"), reverse=True)
+                if number_annotations_list and number_annotations_list[0]['normalized']:
+                     return number_annotations_list[0]['normalized']
             return None
 
     except Exception as e_global_spatial:
-        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE DANS LA FONCTION: {e_global_spatial}")
+        logger.error(f"extraire_followers_spatial ({reseau_nom}): ERREUR GLOBALE INATTENDUE: {e_global_spatial}")
         logger.error(traceback.format_exc())
         return None
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("--- Entrée dans handle_photo ---")
-    # ... (le reste de la fonction handle_photo est inchangé)
- = datetime.datetime.now().strftime("%d/%m/%Y")
-    message_status_general = None 
-    donnees_extraites_ok = False
-    reply_message_exists_for_error_handling = False
-    topic_name_for_error_handling = ""
-    username = "Non trouvé"
-    reseau = "instagram" 
-    abonnés = None
-    action_tentee = False
-
     try:
-        message = update.message
-        if not message or not message.photo:
-            logger.info("handle_photo: Message None ou sans photo. Aucune action.")
-            return
+        user = update.message.from_user
+        file_id = update.message.photo[-1].file_id
+        logger.info(f"Photo reçue de {user.username} (ID: {user.id}), file_id: {file_id}")
 
-        reply = message.reply_to_message
-        if not reply or not hasattr(reply, "forum_topic_created") or not reply.forum_topic_created:
-            logger.info("handle_photo: Pas une réponse à un topic valide. Aucune action.")
-            return
-        
-        action_tentee = True
-        reply_message_exists_for_error_handling = True
-        topic_name = reply.forum_topic_created.name
-        topic_name_for_error_handling = topic_name
-
-        if not topic_name.startswith("SUIVI "):
-            logger.info(f"handle_photo: Nom du topic 	'{topic_name}' non conforme. Aucune action.")
+        if file_id in already_processed:
+            logger.info(f"Image {file_id} déjà traitée. Ignorée.")
+            # await update.message.reply_text("Cette image a déjà été traitée.") # Optionnel
             return
         
-        assistant = topic_name.replace("SUIVI ", "").strip().upper()
-        logger.info(f"handle_photo: Assistant extrait: 	'{assistant}'")
-        message_status_general = f"🤖 {today} - {assistant} - ❌ Analyse OCR impossible ❌"
+        new_file = await context.bot.get_file(file_id)
+        file_path = await new_file.download_to_drive()
+        logger.info(f"Photo téléchargée: {file_path}")
 
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        img_bytes_io = io.BytesIO()
-        await file.download_to_memory(img_bytes_io)
-        img_bytes_io.seek(0)
-        img_content = img_bytes_io.read()
-
-        image = Image.open(io.BytesIO(img_content))
-        width, height = image.size
-        cropped_image = image.crop((0, 0, width, int(height * 0.4)))
-        enhanced_image = ImageOps.autocontrast(cropped_image)
-        byte_arr = io.BytesIO()
-        enhanced_image.save(byte_arr, format='PNG')
-        content_vision = byte_arr.getvalue()
-
-        image_vision = vision.Image(content=content_vision)
-        response = vision_client.text_detection(image=image_vision)
-        texts_annotations_vision = response.text_annotations
+        with io.open(file_path, 'rb') as image_file:
+            content = image_file.read()
+        image = vision.Image(content=content)
+        response = vision_client.text_detection(image=image)
+        texts = response.text_annotations
 
         if response.error.message:
-            logger.error(f"handle_photo: Erreur API Google Vision: {response.error.message}")
+            raise Exception(f"Erreur de l_API Vision: {response.error.message}")
+
+        if not texts:
+            logger.warning("Aucun texte détecté dans l_image.")
+            await update.message.reply_text("Aucun texte n_a été détecté dans l_image.")
             return
 
-        ocr_text_full = texts_annotations_vision[0].description if texts_annotations_vision and len(texts_annotations_vision) > 0 else ""
-        logger.info(f"🔍 OCR Google Vision brut (premiers 500 caractères):\n{ocr_text_full[:500]}")
-
-        if not ocr_text_full:
-            logger.warning("handle_photo: OCR n_a retourné aucun texte.")
-            return
-
-        # Identification du réseau
-        # Amélioration de la détection de réseau
-        ocr_lower = ocr_text_full.lower()
-        if "tiktok" in ocr_lower or "j_aime" in ocr_lower: # "j'aime" est assez spécifique à TikTok
-            reseau = "tiktok"
-        elif "twitter" in ocr_lower or "tweets" in ocr_lower or "reposts" in ocr_lower or "abonnement" in ocr_lower: # "Abonnements" est commun sur Twitter
-            reseau = "twitter"
-        elif "instagram" in ocr_lower or "publications" in ocr_lower or "getallmylinks.com" in ocr_lower or "modifier le profil" in ocr_lower:
-            reseau = "instagram"
-        elif "threads" in ocr_lower:
-            reseau = "threads"
-        elif "beacons.ai" in ocr_lower: # Souvent utilisé pour des liens Instagram/Twitter
-            if "twitter" in ocr_lower: reseau = "twitter"
-            else: reseau = "instagram" # Par défaut si beacons.ai mais pas de mention claire de Twitter
-        else: 
-            reseau = "instagram" 
-            logger.info("Réseau non clairement identifié, par défaut Instagram.")
-        logger.info(f"handle_photo: Réseau identifié: {reseau}")
-
-        usernames_found = re.findall(r"@([a-zA-Z0-9_.-]{3,})", ocr_text_full)
-        reseau_handles = KNOWN_HANDLES.get(reseau.lower(), [])
-        username = "Non trouvé"
-        cleaned_usernames = [re.sub(r"[^a-zA-Z0-9_.-]", "", u).lower() for u in usernames_found]
-        for u_cleaned in cleaned_usernames:
-            if u_cleaned in [h.lower() for h in reseau_handles]:
-                username = next((h_original for h_original in reseau_handles if h_original.lower() == u_cleaned), "Non trouvé")
-                if username != "Non trouvé": break
-        if username == "Non trouvé":
-            for u in usernames_found:
-                matches = get_close_matches(u.lower(), reseau_handles, n=1, cutoff=0.7)
-                if matches: username = matches[0]; break
-        if username == "Non trouvé" and usernames_found: username = usernames_found[0]
-        urls = re.findall(r"(getallmylinks\.com|beacons\.ai|linktr\.ee|tiktok\.com)/([a-zA-Z0-9_.-]+)", ocr_text_full, re.IGNORECASE)
-        if username == "Non trouvé" and urls:
-            for _, u_from_url in urls:
-                match_url = get_close_matches(u_from_url.lower(), reseau_handles, n=1, cutoff=0.7)
-                if match_url: username = match_url[0]; break
-                if username == "Non trouvé": username = u_from_url
-        username = corriger_username(username, reseau)
-        logger.info(f"🕵️ Username final : 	'{username}' (réseau : {reseau})")
-
-        abonnés = None
-        if reseau == "tiktok":
-            mots_cles_tiktok = ["followers", "abonnés", "abonné", "fans", "abos"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_tiktok, "tiktok")
-        elif reseau == "instagram":
-            mots_cles_instagram = ["followers", "abonnés", "abonné", "suivi(e)s", "suivis"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_instagram, "instagram")
-        elif reseau == "twitter":
-            mots_cles_twitter = ["abonnés", "abonné", "followers", "suivies", "suivis", "abonnements"] # "Abonnements" pour le nombre de personnes suivies par le compte, "Abonnés" pour les followers
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_twitter, "twitter")
-        elif reseau == "threads":
-             mots_cles_threads = ["followers", "abonnés", "abonné"]
-             abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_threads, "threads")
-        else: # Fallback générique si le réseau est mal identifié mais qu_on tente quand même
-            mots_cles_generiques = ["followers", "abonnés", "abonné", "fans", "suivi(e)s", "suivis"]
-            abonnés = extraire_followers_spatial(texts_annotations_vision, mots_cles_generiques, f"générique ({reseau})")
-
-        logger.info(f"handle_photo: Abonnés extraits ({reseau}): {abonnés}")
-
-        if not username or username == "Non trouvé" or not abonnés:
-            logger.warning(f"Données incomplètes: Username ('{username}') ou Abonnés ('{abonnés}') pour {reseau}.")
-            donnees_extraites_ok = False
-        else:
-            donnees_extraites_ok = True
-
-        if message.message_id in already_processed:
-            logger.info(f"⚠️ Message ID {message.message_id} déjà traité, on ignore.")
-            return
-        already_processed.add(message.message_id)
-
-        if donnees_extraites_ok:
-            username_to_sheet = f"@{username}"
-            abonnés_to_sheet = str(abonnés)
-            row = [today, assistant, reseau, username_to_sheet, abonnés_to_sheet, ""]
-            try:
-                sheet.append_row(row)
-                logger.info("handle_photo: Ligne ajoutée à Google Sheets.")
-                message_status_general = f"🤖 {today} - {assistant} - ✅ 1 compte détecté et ajouté ✅"
-            except Exception as e_sheet:
-                logger.error(f"handle_photo: Erreur lors de l_ajout à Google Sheets: {e_sheet}")
-                logger.error(traceback.format_exc())
-                message_status_general = f"🤖 {today} - {assistant} - ⚠️ Erreur écriture Sheets ⚠️"
+        reseau_nom, username, followers = identifier_reseau_et_username_par_ocr(texts, KNOWN_HANDLES)
         
-    except Exception as e:
-        logger.error("❌ Erreur globale dans handle_photo")
-        logger.error(traceback.format_exc())
-        assistant_nom_erreur = assistant
-        if assistant == "INCONNU" and reply_message_exists_for_error_handling and topic_name_for_error_handling.startswith("SUIVI "):
-            assistant_nom_erreur = topic_name_for_error_handling.replace("SUIVI ", "").strip().upper()
-        message_status_general = f"🤖 {today} - {assistant_nom_erreur} - ❌ Analyse OCR impossible ❌"
-
-    finally:
-        if action_tentee and message_status_general:
-            logger.info(f"Message à envoyer au General: {message_status_general}")
-            try:
-                await bot.send_message(chat_id=GROUP_ID, text=message_status_general)
-                logger.info("Message de statut envoyé au sujet General.")
-            except Exception as e_send_general:
-                logger.error(f"Impossible d_envoyer le message de statut au sujet General: {e_send_general}")
-                logger.error(traceback.format_exc())
-        else:
-            logger.info("Aucune action de traitement d_image n_a été tentée ou aucun message de statut à envoyer.")
-        logger.info("--- Sortie de handle_photo ---")
-
-from fastapi import FastAPI, Request, HTTPException
-import asyncio
-import uvicorn
-
-app = FastAPI(lifespan=None)
-
-@app.on_event("startup")
-async def startup():
-    logger.info("Application startup...")
-    mode_polling = os.getenv("MODE_POLLING", "false").lower()
-    if mode_polling != "true":
-        base_webhook_url = os.getenv("RAILWAY_PUBLIC_URL")
-        if base_webhook_url:
-            normalized_webhook_url = base_webhook_url.rstrip('/') + "/webhook"
-            logger.info(f"Setting webhook to: {normalized_webhook_url}")
-            await bot.set_webhook(url=normalized_webhook_url, allowed_updates=Update.ALL_TYPES)
-            logger.info("Webhook set.")
-        else:
-            logger.warning("RAILWAY_PUBLIC_URL not set, webhook not configured.")
-    else:
-        logger.info("Mode polling activé, pas de configuration de webhook.")
-
-@app.post("/webhook")
-async def webhook_handler(request: Request):
-    logger.info("--- Entrée dans webhook_handler ---")
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot)
-        
-        if update.message and update.message.photo:
-            context = ContextTypes.DEFAULT_TYPE(application=None, chat_id=update.effective_chat.id if update.effective_chat else None, user_id=update.effective_user.id if update.effective_user else None)
-            await handle_photo(update, context)
-        else:
-            logger.info("webhook_handler: Message reçu sans photo, ignoré.")
+        if username:
+            username = corriger_username(username, reseau_nom.lower() if reseau_nom else "inconnu")
+            logger.info(f"Réseau identifié: {reseau_nom}, Utilisateur: {username}, Followers: {followers}")
             
-        return {"status": "ok"}
-    except json.JSONDecodeError:
-        logger.error("Error decoding JSON from webhook")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+            # Message de confirmation dans le groupe Telegram
+            message_confirmation = f"🤖 {datetime.datetime.now().strftime('%d/%m/%Y')} - {username.upper()} - "
+            if followers:
+                message_confirmation += f"{followers} followers"
+                # Écrire dans Google Sheets
+                try:
+                    row = [datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username, followers, reseau_nom, user.username, file_id]
+                    sheet.append_row(row)
+                    logger.info(f"Données écrites dans Google Sheets pour {username}")
+                except Exception as e_gsheet:
+                    logger.error(f"Erreur lors de l_écriture dans Google Sheets: {e_gsheet}")
+                    logger.error(traceback.format_exc())
+                    await bot.send_message(GROUP_ID, text=f"⚠️ Erreur lors de l_écriture GSheet pour {username}: {e_gsheet}")
+            else:
+                message_confirmation += "❌ Analyse OCR followers impossible ❌"
+            
+            await bot.send_message(GROUP_ID, text=message_confirmation)
+            already_processed.add(file_id) # Ajouter après traitement réussi
+        else:
+            logger.warning("Impossible d_identifier le réseau ou l_utilisateur.")
+            await bot.send_message(GROUP_ID, text=f"🤖 {datetime.datetime.now().strftime('%d/%m/%Y')} - ❓ Compte inconnu - ❌ Analyse OCR impossible (réseau/user non identifié) ❌")
+            already_processed.add(file_id) # Ajouter même si échec pour éviter re-traitement
+
     except Exception as e:
-        logger.error("Error processing webhook")
+        logger.error(f"Erreur dans handle_photo: {e}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        await bot.send_message(GROUP_ID, text=f"🤖 Erreur critique dans le bot: {e}. Consultez les logs.")
     finally:
-        logger.info("--- Sortie de webhook_handler ---")
+        if 'file_path' in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Fichier temporaire {file_path} supprimé.")
+            except OSError as e_remove:
+                logger.error(f"Erreur lors de la suppression du fichier temporaire {file_path}: {e_remove}")
+
+def identifier_reseau_et_username_par_ocr(text_annotations, known_handles):
+    full_text_ocr = text_annotations[0].description.lower() if text_annotations else ""
+    logger.info(f"Texte OCR complet pour identification: {full_text_ocr[:500]}...")
+
+    # Identification du réseau et de l_username
+    reseau_nom = "Inconnu"
+    username_ocr = None
+    followers = None
+
+    # Keywords pour chaque réseau
+    mots_cles = {
+        "instagram": ["profil", "publications", "followers", "suivi(e)s", "modifier profil", "voir les traductions"],
+        "twitter": ["profil", "abonnements", "abonnés", "tweets", "éditer le profil"],
+        "threads": ["profil", "followers", "threads", "réponses", "republications"],
+        "tiktok": ["profil", "abonnements", "followers", "j_aime", "modifier le profil", "partager le profil"]
+    }
+    mots_cles_followers_specifiques = {
+        "instagram": ["followers", "abonnés"], # Le nombre est au-dessus
+        "twitter": ["abonnés", "followers"],    # Le nombre est à gauche
+        "threads": ["followers"],            # Le nombre est à gauche
+        "tiktok": ["followers", "abonnés"]     # Le nombre est au-dessus
+    }
+
+    # 1. Essayer d_identifier le réseau via les known_handles (plus fiable)
+    for handle_type, handles_list in known_handles.items():
+        for handle_info in handles_list:
+            handle = handle_info["id"]
+            # Vérifier si le handle (avec ou sans @) est dans le texte OCR
+            if f"@{handle.lower()}" in full_text_ocr or handle.lower() in full_text_ocr:
+                reseau_nom = handle_info.get("reseau", handle_type.capitalize())
+                username_ocr = handle
+                logger.info(f"Correspondance trouvée via known_handles: Réseau='{reseau_nom}', User='{username_ocr}'")
+                break
+        if username_ocr:
+            break
+    
+    # 2. Si non trouvé par known_handles, essayer par mots-clés génériques du réseau
+    if not username_ocr:
+        logger.info("Aucune correspondance via known_handles. Tentative par mots-clés génériques.")
+        best_match_reseau = None
+        max_keyword_count = 0
+        for net, keywords in mots_cles.items():
+            count = sum(1 for kw in keywords if kw in full_text_ocr)
+            if count > max_keyword_count:
+                max_keyword_count = count
+                best_match_reseau = net
+        
+        if best_match_reseau and max_keyword_count > 1: # Nécessite au moins 2 mots-clés pour réduire les faux positifs
+            reseau_nom = best_match_reseau.capitalize()
+            logger.info(f"Réseau identifié par mots-clés génériques: '{reseau_nom}' (count: {max_keyword_count})")
+            # Essayer d_extraire un @username si possible pour ce réseau
+            match_username = re.search(r"@([a-zA-Z0-9_.]+)", full_text_ocr)
+            if match_username:
+                username_ocr = match_username.group(1)
+                logger.info(f"Username extrait par regex après identification réseau: '{username_ocr}'")
+            else: # Si pas de @username, chercher un nom probable près des mots-clés (plus complexe, pour plus tard)
+                logger.warning(f"Réseau '{reseau_nom}' identifié, mais pas de @username trouvé par regex.")
+        else:
+            logger.warning("Identification du réseau par mots-clés génériques incertaine ou échouée.")
+
+    # 3. Extraction des followers si réseau identifié (même si username pas parfait)
+    if reseau_nom != "Inconnu":
+        current_mots_cles_followers = mots_cles_followers_specifiques.get(reseau_nom.lower(), [])
+        if not current_mots_cles_followers:
+            logger.warning(f"Pas de mots-clés followers spécifiques pour le réseau {reseau_nom}")
+        else:
+            logger.info(f"Utilisation des mots-clés followers pour {reseau_nom}: {current_mots_cles_followers}")
+            followers = extraire_followers_spatial(text_annotations, current_mots_cles_followers, reseau_nom.lower())
+            if followers:
+                logger.info(f"Followers extraits pour {reseau_nom}: {followers}")
+            else:
+                logger.warning(f"Échec de l_extraction des followers pour {reseau_nom} avec la méthode spatiale.")
+    else:
+        logger.warning("Réseau non identifié, impossible d_extraire les followers.")
+
+    # Si username_ocr n_est toujours pas trouvé mais réseau oui, on peut tenter un fallback plus tard
+    if not username_ocr and reseau_nom != "Inconnu":
+        logger.warning(f"Réseau {reseau_nom} identifié, mais username_ocr est None. OCR complet utilisé comme fallback pour nom de compte.")
+        # On pourrait essayer de prendre le premier mot proéminent comme username, mais risqué.
+        # Pour l_instant, on ne met rien si pas de @user ou de known_handle.
+
+    return reseau_nom, username_ocr, followers
+
+def main() -> None:
+    logger.info("Démarrage du bot...")
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo))
+    logger.info("Gestionnaire de photos ajouté.")
+    application.run_polling()
 
 if __name__ == "__main__":
-    mode_polling = os.getenv("MODE_POLLING", "false").lower()
-    if mode_polling == "true":
-        logger.info("Lancement en mode polling...")
-        application = Application.builder().token(TOKEN).build()
-        application.add_handler(MessageHandler(filters.PHOTO & (~filters.COMMAND), handle_photo))
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    else:
-        logger.info("Lancement en mode webhook avec Uvicorn (localement)...")
-        port = int(os.getenv("PORT", 8000))
-        uvicorn.run(app, host="0.0.0.0", port=port)
+    main()
+
