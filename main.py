@@ -160,9 +160,12 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
                     keyword_annotations_list.append({"text": text, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
                     logger.info(f"extraire_followers_spatial ({reseau_nom}): MOT-CLÉ TROUVÉ: '{text}' à y={avg_y}, x={avg_x}")
                 
+                # Check if text contains a digit and broadly matches number format (before normalization)
+                # This regex allows spaces within the number string initially, normaliser_nombre_followers will handle them.
                 if re.search(r"\d", text) and re.match(r"^[\d.,\s]*[kKm]?$", text, re.IGNORECASE):
-                    nombre_normalise_test = normaliser_nombre_followers(text)
+                    nombre_normalise_test = normaliser_nombre_followers(text) # Test normalization
                     if nombre_normalise_test:
+                        # Avoid matching time-like strings as numbers, e.g., "10:30"
                         if not re.fullmatch(r"\d{1,2}:\d{2}", text.replace(" ", "")):
                             number_annotations_list.append({"text": text, "normalized": nombre_normalise_test, "avg_y": avg_y, "avg_x": avg_x, "annotation": annotation})
                             logger.info(f"extraire_followers_spatial ({reseau_nom}): NOMBRE POTENTIEL TROUVÉ: '{text}' (normalisé: {nombre_normalise_test}) à y={avg_y}, x={avg_x}")
@@ -180,78 +183,46 @@ def extraire_followers_spatial(text_annotations, mots_cles_specifiques, reseau_n
 
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Fin de la boucle d_analyse des annotations.")
         logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de mots-clés trouvés: {len(keyword_annotations_list)}")
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels trouvés: {len(number_annotations_list)}")
-        for idx, na in enumerate(number_annotations_list):
-            logger.info(f"  - Nombre {idx}: {na['text']} (normalisé: {na['normalized']}) à y={na['avg_y']}")
+        logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de nombres potentiels initiaux: {len(number_annotations_list)}")
 
-        if not keyword_annotations_list:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun mot-clé de followers trouvé. Tentative de fallback basée sur la position des nombres.")
-            if len(number_annotations_list) >= 3:
-                number_annotations_list.sort(key=lambda ann: ann['avg_x'])
-                logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Nombres triés par X: {[na['text'] for na in number_annotations_list]}")
-                if (abs(number_annotations_list[0]['avg_y'] - number_annotations_list[1]['avg_y']) < 30 and 
-                    abs(number_annotations_list[1]['avg_y'] - number_annotations_list[2]['avg_y']) < 30):
-                    logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback): 3 nombres alignés trouvés. Sélection du 2ème: {number_annotations_list[1]['normalized']}")
-                    return number_annotations_list[1]['normalized']
-                else:
-                    logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Les 3 premiers nombres ne sont pas alignés en Y.")
-            else:
-                logger.warning(f"extraire_followers_spatial ({reseau_nom}) (Fallback): Pas assez de nombres ({len(number_annotations_list)}) pour le fallback des 3 nombres.")
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Conditions de fallback non remplies.")
-            return None
+        # --- BEGIN NEW MERGE LOGIC FOR ADJACENT NUMBERS ---
+        if len(number_annotations_list) > 1:
+            logger.info(f"extraire_followers_spatial ({reseau_nom}): Tentative de fusion des nombres adjacents.")
+            temp_sorted_numbers = sorted(number_annotations_list, key=lambda ann: (round(ann['avg_y'] / 15), ann['avg_x'])) # Group by similar Y lines (tolerance 15px)
+            
+            merged_numbers_final = []
+            visited_indices = [False] * len(temp_sorted_numbers)
+            
+            for i in range(len(temp_sorted_numbers)):
+                if visited_indices[i]:
+                    continue
+                
+                current_ann_data = temp_sorted_numbers[i]
+                # Use original text for merging, normalized value will be recalculated
+                merged_text_parts_original = [current_ann_data['text']] 
+                
+                last_merged_ann_data = current_ann_data
+                visited_indices[i] = True
+                
+                current_chain_merged_successfully = False
 
-        best_candidate = None
-        min_distance = float('inf')
-
-        logger.info(f"extraire_followers_spatial ({reseau_nom}): Recherche du meilleur candidat basé sur la proximité du mot-clé.")
-        for kw_ann in keyword_annotations_list:
-            logger.info(f"  - Analyse pour mot-clé: '{kw_ann['text']}' à y={kw_ann['avg_y']:.2f}, x={kw_ann['avg_x']:.2f}")
-            for num_ann in number_annotations_list:
-                logger.debug(f"    - Comparaison avec nombre: '{num_ann['text']}' (norm: {num_ann['normalized']}) à y={num_ann['avg_y']:.2f}, x={num_ann['avg_x']:.2f}")
-
-                if reseau_nom in ["twitter", "threads"]:
-                    y_diff_abs = abs(num_ann['avg_y'] - kw_ann['avg_y'])
-                    is_to_left = num_ann['avg_x'] < kw_ann['avg_x']
-                    logger.debug(f"      Twitter/Threads: y_diff_abs={y_diff_abs:.2f}, is_to_left={is_to_left}")
-
-                    if y_diff_abs < 30 and is_to_left: 
-                        horizontal_distance = kw_ann['avg_x'] - num_ann['avg_x']
-                        logger.debug(f"        Candidat potentiel (Twitter/Threads). horizontal_distance: {horizontal_distance:.2f}")
-                        if 0 < horizontal_distance < 200: 
-                            if horizontal_distance < min_distance:
-                                min_distance = horizontal_distance
-                                best_candidate = num_ann['normalized']
-                                logger.info(f"        NOUVEAU MEILLEUR CANDIDAT (Twitter/Threads pour '{kw_ann['text']}'): {best_candidate} (h_dist: {min_distance:.2f})")
-                            else:
-                                logger.debug(f"        Distance horizontale {horizontal_distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
-                        else:
-                            logger.debug(f"        Distance horizontale {horizontal_distance:.2f} non comprise entre 0 et 200.")
-                    else:
-                        logger.debug(f"        Critères de position (Twitter/Threads: y_diff_abs < 30 ET is_to_left) non remplis.")
-                else: 
-                    y_diff = num_ann['avg_y'] - kw_ann['avg_y'] 
-                    x_diff_abs = abs(kw_ann['avg_x'] - num_ann['avg_x'])
-                    logger.debug(f"      Autres réseaux: y_diff={y_diff:.2f}, x_diff_abs={x_diff_abs:.2f}")
-                    if -25 < y_diff < 100 and x_diff_abs < 150: 
-                        distance = (y_diff**2 + x_diff_abs**2)**0.5
-                        logger.debug(f"        Candidat potentiel (Autres). Distance: {distance:.2f}")
-                        if distance < min_distance:
-                            min_distance = distance
-                            best_candidate = num_ann['normalized']
-                            logger.info(f"        NOUVEAU MEILLEUR CANDIDAT (Autres pour '{kw_ann['text']}'): {best_candidate} (dist: {min_distance:.2f})")
-                        else:
-                            logger.debug(f"        Distance {distance:.2f} non inférieure à min_distance {min_distance:.2f}.")
-                    else:
-                        logger.debug(f"        Critères de position (Autres: -25 < y_diff < 100 ET x_diff_abs < 150) non remplis.")
-        
-        if best_candidate:
-            logger.info(f"extraire_followers_spatial ({reseau_nom}): Nombre de followers final extrait: {best_candidate}")
-            return best_candidate
-        else:
-            logger.warning(f"extraire_followers_spatial ({reseau_nom}): Aucun candidat de followers n_a pu être sélectionné après analyse spatiale.")
-            if number_annotations_list:
-                try:
-                    valid_numbers = [int(na['normalized']) for na in number_annotations_list if na['normalized'] and na['normalized'].isdigit() and int(na['normalized']) >=0]
+                for j in range(i + 1, len(temp_sorted_numbers)):
+                    if visited_indices[j]:
+                        continue
+                    
+                    next_ann_data = temp_sorted_numbers[j]
+                    
+                    y_diff = abs(last_merged_ann_data['avg_y'] - next_ann_data['avg_y'])
+                    # x_diff should represent the gap between the end of last_merged_ann and start of next_ann
+                    # Approximating with avg_x difference for now, assuming typical text height/width ratios
+                    # A more robust method would use bounding_poly.vertices
+                    x_diff_avg = next_ann_data['avg_x'] - last_merged_ann_data['avg_x'] 
+                    
+                    # Thresholds: very close on Y, next is to the right and not too far horizontally.
+                    # x_diff_avg < 80 implies they are relatively close horizontally. Max Y diff of 20px.
+                    if y_diff < 25 and 0 < x_diff_avg < 80: 
+                        # Try to concatenate original texts and then normalize
+                        # This handles cases like lized']) >=0]
                     if valid_numbers:
                         valid_numbers.sort(reverse=True)
                         logger.info(f"extraire_followers_spatial ({reseau_nom}) (Fallback final): Nombres valides triés par valeur: {valid_numbers}")
